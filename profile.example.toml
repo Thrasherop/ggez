@@ -1,0 +1,30 @@
+# Example ggez profile. Apply with:  ggez apply profile.example.toml
+# Every key is optional; leave out what you do not want changed.
+
+dpi = [400, 800, 1400, 2400, 3200]   # 1 to 5 presets, 100-18000
+dpi_select = 3                       # active preset, counting from 1
+polling = 1000                       # Hz: 125, 250, 500 or 1000
+sleep_minutes = 5                    # 0-20, 0 = never
+dim_seconds = 30                     # 0-1200, 0 = never
+
+# Lighting the mouse shows by itself after power-on:
+# off, reactive, rainbow or reactive-rainbow.
+default_lighting = "rainbow"
+reactive = "off"                     # color flashed on click, or "off"
+
+# Zone colors are NOT stored on the mouse: they last until it powers off.
+[colors]
+top = "#ff0000"       # front
+middle = "#00ff00"    # under the palm
+bottom = "#0000ff"    # by the wrist
+
+# Bindings are stored on the mouse and work without any software running.
+# Buttons not listed here get their factory binding.
+# Buttons: left, right, middle, tilt-left, tilt-right, dpi, g1-g12,
+#          scroll-up, scroll-down
+# Actions: disabled, left, right, middle, back, forward, dpi, scroll-up,
+#          scroll-down, key:<key>[+<key>...], media:<name>
+[buttons]
+g10 = "key:ctrl+x"
+g11 = "key:ctrl+c"
+g12 = "key:ctrl+v"

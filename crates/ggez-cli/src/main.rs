@@ -3,6 +3,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use ggez_core::transport::{list_steelseries, listen, HidTransport};
 use ggez_core::{Aerox9, Button, ButtonMap, DefaultLighting, Link, MockTransport, PollingRate, Rgb, Transport, Zone};
 
+mod profile;
+
 /// Configure a SteelSeries Aerox 9 Wireless without SteelSeries GG.
 #[derive(Parser)]
 #[command(name = "ggez", version)]
@@ -90,6 +92,8 @@ enum Command {
         /// `button=action` pairs.
         bindings: Vec<String>,
     },
+    /// Apply every setting in a profile file (TOML). See the README.
+    Apply { file: std::path::PathBuf },
     /// Save current settings to the mouse's onboard memory.
     Save,
     /// Protocol research: print every report the mouse sends on its
@@ -255,6 +259,15 @@ fn run<T: Transport>(mouse: &mut Aerox9<T>, cli: &Cli) -> Result<()> {
                 map.set(button.parse::<Button>()?, action.parse()?);
             }
             mouse.set_buttons(&map)?;
+        }
+        Command::Apply { file } => {
+            let text = std::fs::read_to_string(file)
+                .with_context(|| format!("could not read {}", file.display()))?;
+            let profile = profile::Profile::parse(&text)
+                .with_context(|| format!("{} is not a valid profile", file.display()))?;
+            if !profile.apply(mouse)? {
+                bail!("{} sets nothing", file.display());
+            }
         }
         Command::Sleep { minutes } => mouse.set_sleep_timer(*minutes)?,
         Command::Dim { seconds } => mouse.set_dim_timer(*seconds)?,

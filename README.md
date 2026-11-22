@@ -28,6 +28,17 @@ Settings are saved to the mouse's onboard memory unless you pass `--no-save`.
 Both USB cable (`1038:185a`) and the 2.4 GHz dongle (`1038:1858`) are
 supported, plus the WoW Edition IDs. Bluetooth is not.
 
+## Profiles
+
+Put the whole setup in one TOML file and apply it in one go:
+
+    ggez apply profile.example.toml
+
+See [profile.example.toml](profile.example.toml) for every key. Bindings are
+stored on the mouse and are held for as long as the button is, including key
+combinations such as `key:ctrl+v`. Zone colors are not stored on the mouse
+and have to be re-applied after it powers on.
+
 ## Not done yet
 
 - Button remapping over the USB cable (the dongle works: `ggez buttons
