@@ -7,10 +7,12 @@ use crate::transport::Transport;
 use crate::{Error, Result};
 
 const READ_TIMEOUT_MS: i32 = 200;
-/// How long to wait for a reply before resending the command. Saving to
-/// onboard memory takes the mouse up to half a second to acknowledge.
-const REPLY_WAIT: Duration = Duration::from_millis(1000);
-const ATTEMPTS: usize = 4;
+/// How long to wait for a reply before each resend, in milliseconds. Most
+/// replies arrive within 20 ms, so early resends are quick: with SteelSeries
+/// GG streaming commands through the same dongle, well over half of ours
+/// can go unanswered. Saving to onboard memory takes up to half a second to
+/// acknowledge; a late reply to an earlier send still counts.
+const REPLY_WAITS_MS: [u64; 12] = [150, 150, 150, 150, 150, 150, 300, 300, 300, 700, 700, 700];
 /// Upper bound on stale input reports discarded before a command.
 const MAX_STALE_REPORTS: usize = 256;
 
@@ -90,10 +92,10 @@ impl<T: Transport> Aerox9<T> {
         let command = payload[0];
         let mut buf = [0u8; 64];
         let mut link_down = false;
-        for _ in 0..ATTEMPTS {
-            self.drain()?;
+        self.drain()?;
+        for wait in REPLY_WAITS_MS {
             self.write(payload.clone())?;
-            let deadline = Instant::now() + REPLY_WAIT;
+            let deadline = Instant::now() + Duration::from_millis(wait);
             loop {
                 let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero() {
@@ -142,10 +144,10 @@ impl<T: Transport> Aerox9<T> {
         let query = protocol::firmware_query(self.link);
         let command = query[0];
         let mut buf = [0u8; 64];
-        for _ in 0..ATTEMPTS {
-            self.drain()?;
+        self.drain()?;
+        for wait in REPLY_WAITS_MS {
             self.write(query.clone())?;
-            let deadline = Instant::now() + REPLY_WAIT;
+            let deadline = Instant::now() + Duration::from_millis(wait);
             loop {
                 let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero() {
