@@ -60,6 +60,8 @@ pub struct App {
     pub draft: Draft,
     /// What was last sent to the mouse (or loaded at start).
     pub applied: Draft,
+    /// The draft as of the previous frame, to notice edits.
+    seen: Draft,
     status: Status,
     notice: Notice,
     applying: bool,
@@ -106,6 +108,7 @@ impl App {
             tab: Tab::Sensitivity,
             action_text: draft.buttons.get(selected_button).to_string(),
             applied: draft.clone(),
+            seen: draft.clone(),
             draft,
             status: Status::Unknown,
             notice,
@@ -197,6 +200,14 @@ impl App {
     pub fn ui(&mut self, ctx: &egui::Context) {
         self.handle_replies();
         self.capture_key(ctx);
+        // A success message describes the settings as they were; once they
+        // change it is stale, and the "not on the mouse yet" hint takes over.
+        if self.draft != self.seen {
+            if matches!(self.notice, Notice::Good(_)) {
+                self.notice = Notice::None;
+            }
+            self.seen = self.draft.clone();
+        }
 
         egui::SidePanel::left("sidebar")
             .exact_width(230.0)
@@ -330,13 +341,6 @@ impl App {
                 Notice::Working(text) => {
                     ui.spinner();
                     ui.label(text);
-                }
-                Notice::Good(text) if self.is_dirty() => {
-                    let _ = text;
-                    ui.label(
-                        RichText::new("You have changes that are not on the mouse yet.")
-                            .color(WARNING),
-                    );
                 }
                 Notice::Good(text) => {
                     ui.label(RichText::new(text).color(GOOD));
@@ -516,6 +520,7 @@ impl App {
             egui::ComboBox::from_id_salt("action-kind")
                 .selected_text(kind.label())
                 .width(220.0)
+                .height(320.0)
                 .show_ui(ui, |ui| {
                     for candidate in Kind::ALL {
                         if ui
@@ -710,6 +715,11 @@ impl App {
                     repeat: false,
                     ..
                 } => Some((*key, *modifiers)),
+                // The windowing layer reports these three shortcuts as
+                // clipboard events instead of key presses.
+                egui::Event::Copy => Some((egui::Key::C, clipboard_modifier())),
+                egui::Event::Cut => Some((egui::Key::X, clipboard_modifier())),
+                egui::Event::Paste(_) => Some((egui::Key::V, clipboard_modifier())),
                 _ => None,
             })
         });
@@ -1198,6 +1208,15 @@ pub fn describe(action: Action) -> String {
             let text = action.to_string();
             media_title(&text["media:".len()..]).into()
         }
+    }
+}
+
+/// The modifier that makes C, X and V into copy, cut and paste here.
+fn clipboard_modifier() -> egui::Modifiers {
+    if cfg!(target_os = "macos") {
+        egui::Modifiers::MAC_CMD
+    } else {
+        egui::Modifiers::CTRL
     }
 }
 

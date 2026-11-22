@@ -91,7 +91,7 @@ impl Profile {
     }
 
     pub fn to_toml(&self) -> Result<String> {
-        Ok(toml::to_string_pretty(self)?)
+        Ok(toml::to_string(self)?)
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {

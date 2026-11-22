@@ -321,3 +321,52 @@ fn descriptions_read_naturally() {
         assert_eq!(describe(text.parse().unwrap()), expected, "{text}");
     }
 }
+
+/// Found by hand: the windowing layer delivers Ctrl+C, Ctrl+X and Ctrl+V as
+/// clipboard events, not key presses, so they need their own handling.
+#[test]
+fn clipboard_shortcuts_can_be_captured() {
+    let modifier = if cfg!(target_os = "macos") {
+        "win"
+    } else {
+        "ctrl"
+    };
+    for (event, key) in [
+        (egui::Event::Copy, "c"),
+        (egui::Event::Cut, "x"),
+        (egui::Event::Paste("clipboard text".into()), "v"),
+    ] {
+        let (mut harness, _, _) = window(&format!("clipboard-{key}"));
+        click(&mut harness, "Buttons");
+        click(&mut harness, "Press to set");
+        harness.input_mut().events.push(event);
+        harness.run();
+        assert_eq!(
+            harness
+                .state()
+                .draft
+                .buttons
+                .get(Button::Grid(1))
+                .to_string(),
+            format!("key:{modifier}+{key}")
+        );
+    }
+}
+
+/// Found by hand: the export confirmation was hidden behind the "unsaved
+/// changes" hint whenever there were pending edits.
+#[test]
+fn export_is_confirmed_even_with_pending_changes() {
+    let (mut harness, fake, _) = window("export-notice");
+    let file = temp_dir("export-notice-file").join("mine.toml");
+    fake.0.lock().unwrap().save_path = Some(file.clone());
+    click(&mut harness, "250 Hz");
+    click(&mut harness, "Settings");
+    click(&mut harness, "Export…");
+    harness.get_by_label(&format!("Exported to {}", file.display()));
+
+    // Editing afterwards makes the message stale, so it goes away.
+    click(&mut harness, "Sensitivity");
+    click(&mut harness, "500 Hz");
+    harness.get_by_label("You have changes that are not on the mouse yet.");
+}

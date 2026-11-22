@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows, os: windows-latest, artifact: ggez-windows-x64 }
+          - { name: macOS, os: macos-latest, artifact: ggez-macos-arm64 }
+          - { name: Linux, os: ubuntu-latest, artifact: ggez-linux-x64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev libxkbcommon-dev libwayland-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      # rust-toolchain.toml pins the version and components.
+      - name: Install Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Collect programs
+        shell: bash
+        run: |
+          mkdir dist
+          cp target/release/ggez${{ runner.os == 'Windows' && '.exe' || '' }} dist/
+          cp target/release/ggez-gui${{ runner.os == 'Windows' && '.exe' || '' }} dist/
+          cp README.md LICENSE profile.example.toml dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist
