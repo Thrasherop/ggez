@@ -241,6 +241,14 @@ impl App {
 
     /// Things the user should know whatever page they are on.
     fn banners(&mut self, ui: &mut Ui) {
+        if matches!(self.status, Status::NoDevice | Status::Asleep) {
+            theme::callout(
+                ui,
+                TEXT_DIM,
+                "The mouse is not reachable right now. You can keep editing; Apply becomes available when it is back.",
+            );
+            ui.add_space(6.0);
+        }
         if self.gg_running {
             theme::callout(ui, WARNING, ggez_service::gg::ADVICE);
             ui.add_space(6.0);

@@ -10,6 +10,7 @@
 mod app;
 mod device;
 mod draft;
+mod icon;
 mod mouse_view;
 mod theme;
 
@@ -78,35 +79,6 @@ impl eframe::App for Window {
     }
 }
 
-/// The window icon: a teal ring on a dark rounded square, drawn here so the
-/// program needs no image files.
-fn icon() -> egui::IconData {
-    const SIZE: usize = 64;
-    let mut rgba = Vec::with_capacity(SIZE * SIZE * 4);
-    for y in 0..SIZE {
-        for x in 0..SIZE {
-            let (dx, dy) = (x as f32 - 31.5, y as f32 - 31.5);
-            let distance = (dx * dx + dy * dy).sqrt();
-            // Rounded square: inside unless in a corner beyond the radius.
-            let (cx, cy) = ((dx.abs() - 20.0).max(0.0), (dy.abs() - 20.0).max(0.0));
-            let inside = (cx * cx + cy * cy).sqrt() <= 11.5;
-            let pixel: [u8; 4] = if !inside {
-                [0, 0, 0, 0]
-            } else if (13.0..=20.0).contains(&distance) || distance <= 4.5 {
-                [45, 212, 191, 255]
-            } else {
-                [24, 24, 27, 255]
-            };
-            rgba.extend_from_slice(&pixel);
-        }
-    }
-    egui::IconData {
-        rgba,
-        width: SIZE as u32,
-        height: SIZE as u32,
-    }
-}
-
 fn main() -> anyhow::Result<()> {
     let profile_path = paths::profile_path().ok();
     let background = std::env::args().any(|arg| arg == "--background");
@@ -127,7 +99,11 @@ fn main() -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("ggez")
-            .with_icon(Arc::new(icon()))
+            .with_icon(Arc::new(egui::IconData {
+                rgba: icon::rgba(128),
+                width: 128,
+                height: 128,
+            }))
             .with_inner_size([1080.0, 760.0])
             .with_min_inner_size([980.0, 620.0]),
         ..Default::default()
