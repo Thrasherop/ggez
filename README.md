@@ -12,6 +12,12 @@ ggez closed, or on a computer that has never heard of it.
 > compile and pass their tests in CI but have not yet been run against a
 > mouse. Not made by or affiliated with SteelSeries.
 
+![The buttons page: a drawing of the mouse with every button clickable](docs/images/buttons.jpg)
+
+| | |
+| --- | --- |
+| ![The lighting page, with the three zones lit](docs/images/lighting.jpg) | ![The sensitivity page](docs/images/sensitivity.jpg) |
+
 ## What it does
 
 | | |
@@ -31,8 +37,9 @@ mouse, which overrides yours and makes commands fail.
 
 ## The app
 
-`ggez-gui` opens a window with everything above. Change what you like and
-press **Apply to mouse**.
+`ggez-gui` opens a window with everything above. Click a button on the
+drawing of the mouse to rebind it, pick colors and watch the preview (and the
+mouse itself) follow, then press **Apply to mouse**.
 
 One thing the mouse cannot remember is static zone colors: after it powers
 on it shows its built-in lighting until a computer sends colors again. ggez
