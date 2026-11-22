@@ -1,0 +1,173 @@
+name: Release
+
+# Pushing a tag such as v0.1.0 builds the downloads for every system and
+# puts them on a draft release, which a maintainer then reviews and
+# publishes. Running the workflow by hand builds the same files and keeps
+# them as artifacts of the run, without making a release.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    env:
+      # Whether the repository holds a macOS signing certificate.
+      HAVE_MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows installer, os: windows-latest }
+          - { name: macOS disk image, os: macos-latest }
+          - { name: Linux archive, os: ubuntu-latest }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version
+        id: version
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # A release tag must name the version the programs report.
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "The tag $GITHUB_REF_NAME does not match version $version in Cargo.toml." >&2
+            exit 1
+          fi
+
+      - name: Install Linux libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libudev-dev libxkbcommon-dev libwayland-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      # rust-toolchain.toml pins the version and components.
+      - name: Install Rust
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release
+
+      # ---- Windows: an installer -------------------------------------
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build --release
+
+      - name: Make the installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress
+          }
+          # The icon the build made for the programs also suits the installer.
+          $icon = Get-ChildItem target\release\build\ggez-gui-*\out\ggez.ico |
+            Sort-Object LastWriteTime | Select-Object -Last 1
+          $arguments = @("/DVersion=${{ steps.version.outputs.version }}")
+          if ($icon) { $arguments += "/DIcon=$($icon.FullName)" }
+          & $iscc @arguments packaging\windows\ggez.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # ---- macOS: an app for Intel and Apple Silicon in a disk image ---
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+
+      # Only when the repository has a signing certificate in its secrets;
+      # packaging/README.md says how to add one.
+      - name: Import the signing certificate
+        if: runner.os == 'macOS' && env.HAVE_MACOS_CERTIFICATE == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(uuidgen)"
+          echo "$MACOS_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/certificate.p12"
+
+      - name: Make the disk image
+        if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          NOTARY_APPLE_ID: ${{ secrets.MACOS_NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.MACOS_NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.MACOS_NOTARY_PASSWORD }}
+        run: |
+          mkdir -p dist
+          packaging/macos/bundle.sh "${{ steps.version.outputs.version }}"
+          rm -rf dist/ggez.app
+
+      # ---- Linux: an archive -------------------------------------------
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: cargo build --release
+
+      - name: Make the archive
+        if: runner.os == 'Linux'
+        run: |
+          name="ggez-${{ steps.version.outputs.version }}-linux-x64"
+          mkdir -p "dist/$name"
+          cp target/release/ggez target/release/ggez-gui "dist/$name/"
+          cp README.md LICENSE profile.example.toml packaging/linux/70-ggez.rules "dist/$name/"
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          rm -rf "dist/$name"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: download-${{ runner.os }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: downloads
+          pattern: download-*
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd downloads
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" downloads/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --title "ggez ${GITHUB_REF_NAME#v}" \
+            --generate-notes

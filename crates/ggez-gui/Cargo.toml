@@ -28,3 +28,9 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# Writes the program icon as a PNG for packaging. Listed so that its tests
+# run with the rest.
+[[example]]
+name = "icon_png"
+test = true

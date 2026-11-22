@@ -125,9 +125,23 @@ about a tenth of a second.
 
 ## Install
 
-There are no releases yet. Each
-[CI run](https://github.com/Thrasherop/ggez/actions) attaches builds for
-Windows, macOS (Apple silicon) and Linux, or build it yourself:
+Downloads are on the
+[Releases page](https://github.com/Thrasherop/ggez/releases):
+
+| System | Download | Then |
+| --- | --- | --- |
+| Windows 10 or 11 | `ggez-…-windows-x64-setup.exe` | Run it. It installs for you alone and does not ask for administrator rights. |
+| macOS 11 or newer, Intel or Apple Silicon | `ggez-…-macos.dmg` | Open it and drag ggez to Applications. |
+| Linux, x64 | `ggez-…-linux-x64.tar.gz` | Unpack it, and install the udev rule as shown below. |
+
+The downloads are not signed yet, so the system asks before running them.
+On Windows choose **More info → Run anyway**. On macOS open **System
+Settings → Privacy & Security** after the first attempt and choose **Open
+Anyway**.
+
+If the Releases page is empty, no version has been published yet: each
+[CI run](https://github.com/Thrasherop/ggez/actions) attaches the bare
+programs. Or build it yourself:
 
 ```
 cargo build --release

@@ -1,0 +1,7 @@
+# Build the Microsoft C runtime into the Windows programs, so they run on a
+# machine that has never had the Visual C++ redistributable installed.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
