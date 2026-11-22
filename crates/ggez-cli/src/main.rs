@@ -106,7 +106,11 @@ enum Command {
     Apply { file: Option<std::path::PathBuf> },
     /// Run the background helper: re-applies colors whenever the mouse
     /// connects or wakes, and applies the helper profile when it changes.
-    Daemon,
+    Daemon {
+        /// Use this profile file instead of the default one.
+        #[arg(long)]
+        profile: Option<std::path::PathBuf>,
+    },
     /// Start the background helper at login: `enable`, `disable` or `status`.
     Autostart { action: AutostartArg },
     /// Print where the helper profile lives.
@@ -137,9 +141,9 @@ fn main() -> Result<()> {
     if let Command::List = cli.command {
         return list();
     }
-    match cli.command {
-        Command::Daemon => return daemon(),
-        Command::Autostart { action } => return autostart_command(action),
+    match &cli.command {
+        Command::Daemon { profile } => return daemon(profile.clone()),
+        Command::Autostart { action } => return autostart_command(*action),
         Command::ProfilePath => {
             println!("{}", paths::profile_path()?.display());
             return Ok(());
@@ -216,11 +220,14 @@ fn list() -> Result<()> {
     Ok(())
 }
 
-fn daemon() -> Result<()> {
+fn daemon(profile: Option<std::path::PathBuf>) -> Result<()> {
     let Some(_lock) = helper::InstanceLock::acquire()? else {
         bail!("the ggez helper is already running");
     };
-    let profile = paths::profile_path()?;
+    let profile = match profile {
+        Some(profile) => profile,
+        None => paths::profile_path()?,
+    };
     println!("ggez helper running; profile: {}", profile.display());
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     helper::run(&profile, stop, |event| println!("{event:?}"));
@@ -253,7 +260,7 @@ fn run<T: Transport>(mouse: &mut Aerox9<T>, cli: &Cli) -> Result<()> {
     match &cli.command {
         Command::List
         | Command::Listen { .. }
-        | Command::Daemon
+        | Command::Daemon { .. }
         | Command::Autostart { .. }
         | Command::ProfilePath => unreachable!("handled in main"),
         Command::Battery => {

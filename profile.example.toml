@@ -12,7 +12,12 @@ dim_seconds = 30                     # 0-1200, 0 = never
 default_lighting = "rainbow"
 reactive = "off"                     # color flashed on click, or "off"
 
+# What the LEDs show while a computer is driving them: "static" uses the
+# zone colors below, "rainbow" the mouse's built-in color cycle.
+effect = "static"
+
 # Zone colors are NOT stored on the mouse: they last until it powers off.
+# The ggez helper re-sends them whenever the mouse connects or wakes.
 [colors]
 top = "#ff0000"       # front
 middle = "#00ff00"    # under the palm

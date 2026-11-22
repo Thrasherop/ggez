@@ -33,6 +33,10 @@ pub struct Profile {
     /// Color flashed on click, or "off".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reactive: Option<String>,
+    /// What the LEDs show: "static" (the zone colors below, the default) or
+    /// "rainbow" (the mouse's built-in color cycle; zone colors are ignored).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effect: Option<String>,
     #[serde(default, skip_serializing_if = "Colors::is_empty")]
     pub colors: Colors,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -70,6 +74,7 @@ struct Checked {
     dim_seconds: Option<u32>,
     default_lighting: Option<DefaultLighting>,
     reactive: Option<Option<Rgb>>,
+    rainbow: bool,
     zones: [(Zone, Option<Rgb>); 3],
     buttons: Option<ButtonMap>,
 }
@@ -150,6 +155,11 @@ impl Profile {
                 c => c.parse::<Rgb>().map(Some),
             })
             .transpose()?;
+        let rainbow = match self.effect.as_deref() {
+            None | Some("static") => false,
+            Some("rainbow") => true,
+            Some(other) => bail!("unknown effect {other:?} (use static or rainbow)"),
+        };
         let color = |own: &Option<String>| -> Result<Option<Rgb>> {
             Ok(own
                 .as_ref()
@@ -180,6 +190,7 @@ impl Profile {
             dim_seconds: self.dim_seconds,
             default_lighting,
             reactive,
+            rainbow,
             zones,
             buttons,
         })
@@ -226,7 +237,7 @@ impl Profile {
 
     /// Whether the profile has anything [`Profile::apply_volatile`] would send.
     pub fn has_volatile(&self) -> bool {
-        self.reactive.is_some() || !self.colors.is_empty()
+self.reactive.is_some() || self.effect.is_some() || !self.colors.is_empty()
     }
 
     fn send_lighting<T: Transport>(checked: &Checked, mouse: &mut Aerox9<T>) -> Result<bool> {
@@ -234,6 +245,10 @@ impl Profile {
         if let Some(color) = checked.reactive {
             mouse.set_reactive_color(color)?;
             sent = true;
+        }
+        if checked.rainbow {
+            mouse.rainbow_effect()?;
+            return Ok(true);
         }
         for (zone, color) in checked.zones {
             if let Some(color) = color {
@@ -294,6 +309,17 @@ mod tests {
         assert_eq!(sent, [0x66, 0x61, 0x61, 0x61]);
         assert!(Profile::parse(FULL).unwrap().has_volatile());
         assert!(!Profile::parse("polling = 500").unwrap().has_volatile());
+    }
+
+    #[test]
+    fn rainbow_effect_replaces_zone_colors() {
+        let text = "effect = \"rainbow\"
+[colors]
+all = \"red\"
+";
+        let packets = commands(|p, m| p.apply_volatile(m), text);
+        assert_eq!(packets, [vec![0x00, 0x62, 0xFF]]);
+        assert!(Profile::parse("effect = \"disco\"").unwrap().validate().is_err());
     }
 
     #[test]
