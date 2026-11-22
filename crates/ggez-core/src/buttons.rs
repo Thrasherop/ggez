@@ -34,6 +34,10 @@ pub enum Button {
     Left,
     Right,
     Middle,
+    /// Scroll wheel pushed left; mouse button 4 (back) from the factory.
+    TiltLeft,
+    /// Scroll wheel pushed right; mouse button 5 (forward) from the factory.
+    TiltRight,
     /// The button behind the scroll wheel.
     Dpi,
     /// Side grid button 1-12, numbered as printed on the mouse.
@@ -44,8 +48,7 @@ pub enum Button {
 
 /// Table slot of each grid button, indexed by grid number - 1. The grid is
 /// three buttons wide and the table stores it column by column, right
-/// column first. Buttons 1-6 were confirmed by pressing them on a real
-/// mouse; 7-12 follow the same pattern.
+/// column first. All twelve were confirmed by pressing them on a real mouse.
 const GRID_SLOTS: [usize; 12] = [14, 10, 6, 15, 11, 7, 16, 12, 8, 17, 13, 9];
 
 impl Button {
@@ -54,8 +57,8 @@ impl Button {
             Button::Left => 0,
             Button::Right => 1,
             Button::Middle => 2,
-            // Slots 3 and 4 are mouse buttons 4 and 5, which this mouse has
-            // no physical control for; they keep their factory values.
+            Button::TiltLeft => 3,
+            Button::TiltRight => 4,
             Button::Dpi => 5,
             Button::Grid(n) => GRID_SLOTS[usize::from(n) - 1],
             Button::ScrollUp => 18,
@@ -73,6 +76,8 @@ impl FromStr for Button {
             "left" => Button::Left,
             "right" => Button::Right,
             "middle" => Button::Middle,
+            "tilt-left" => Button::TiltLeft,
+            "tilt-right" => Button::TiltRight,
             "dpi" => Button::Dpi,
             "scroll-up" => Button::ScrollUp,
             "scroll-down" => Button::ScrollDown,

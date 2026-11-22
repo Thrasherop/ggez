@@ -36,7 +36,7 @@ pub enum ProtoError {
     BadColor(String),
     #[error("unexpected battery response {0:02x?}")]
     BadBatteryResponse(Vec<u8>),
-    #[error("unknown button {0:?} (use left, right, middle, dpi, g1-g12, scroll-up, scroll-down)")]
+    #[error("unknown button {0:?} (use left, right, middle, tilt-left, tilt-right, dpi, g1-g12, scroll-up, scroll-down)")]
     BadButton(String),
     #[error("unknown action {0:?} (use disabled, left, right, middle, back, forward, dpi, scroll-up, scroll-down, key:<name>, media:<name>)")]
     BadAction(String),

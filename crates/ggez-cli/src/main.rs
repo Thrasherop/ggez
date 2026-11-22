@@ -74,13 +74,15 @@ enum Command {
     Dim { seconds: u32 },
     /// Rebind buttons, e.g. `ggez buttons g1=key:f13 g2=media:play-pause g3=disabled`.
     ///
-    /// Buttons: left, right, middle, dpi, g1-g12 (side grid), scroll-up, scroll-down.
+    /// Buttons: left, right, middle, tilt-left, tilt-right, dpi, g1-g12 (side
+    /// grid), scroll-up, scroll-down.
     /// Actions: disabled, left, right, middle, back, forward, dpi, scroll-up,
     /// scroll-down, key:<name>, media:<name>.
     ///
     /// The mouse cannot report its bindings, so this sets ALL of them: any
     /// button not listed goes back to its factory binding. With no arguments,
-    /// every button is reset. 2.4 GHz dongle only for now.
+    /// every button is reset. 2.4 GHz dongle only for now. Close SteelSeries GG
+    /// first: while it runs it performs its own bindings on top of these.
     Buttons {
         /// `button=action` pairs.
         bindings: Vec<String>,
