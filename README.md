@@ -111,7 +111,7 @@ them all. The app and the helper use the profile at the path printed by
 ### Several profiles
 
 Keep one setup for work and another for games, and switch with one click
-in the app's sidebar or one command:
+at the top of the app's window or one command:
 
 ```
 ggez profile save Work        save the settings in use under a name

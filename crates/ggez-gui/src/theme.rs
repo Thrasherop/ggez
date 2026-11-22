@@ -17,7 +17,6 @@ use eframe::egui::{
 
 pub const BG: Color32 = Color32::from_rgb(9, 10, 12);
 pub const BG_TOP: Color32 = Color32::from_rgb(16, 18, 22);
-pub const SIDEBAR: Color32 = Color32::from_rgb(13, 14, 17);
 pub const CARD: Color32 = Color32::from_rgb(21, 23, 28);
 pub const CARD_TOP: Color32 = Color32::from_rgb(28, 30, 36);
 pub const RAISED: Color32 = Color32::from_rgb(36, 39, 46);
@@ -35,6 +34,10 @@ pub const ACCENT: Color32 = Color32::from_rgb(45, 212, 191);
 pub const ACCENT_COOL: Color32 = Color32::from_rgb(56, 189, 248);
 pub const ACCENT_DEEP: Color32 = Color32::from_rgb(19, 78, 74);
 pub const ON_ACCENT: Color32 = Color32::from_rgb(3, 24, 26);
+/// What is selected, and the main action: plain white, so that the only
+/// colors in the window are the ones the mouse itself is showing.
+pub const SELECT: Color32 = Color32::from_rgb(244, 245, 248);
+pub const ON_SELECT: Color32 = Color32::from_rgb(10, 11, 14);
 pub const WARNING: Color32 = Color32::from_rgb(251, 191, 36);
 pub const DANGER: Color32 = Color32::from_rgb(248, 113, 113);
 pub const GOOD: Color32 = Color32::from_rgb(74, 222, 128);
@@ -130,8 +133,10 @@ pub fn apply(ctx: &egui::Context) {
         visuals.extreme_bg_color = SUNKEN;
         visuals.faint_bg_color = CARD;
         visuals.hyperlink_color = ACCENT;
-        visuals.selection.bg_fill = ACCENT_DEEP;
-        visuals.selection.stroke = Stroke::new(1.0, TEXT);
+        // Neutral, like every other mark of what is selected. It is also
+        // behind selected text, so it cannot be as light as [`SELECT`].
+        visuals.selection.bg_fill = Color32::from_rgb(82, 88, 102);
+        visuals.selection.stroke = Stroke::new(1.0, Color32::WHITE);
         visuals.slider_trailing_fill = true;
         visuals.popup_shadow = egui::Shadow {
             offset: [0, 12],
@@ -272,11 +277,17 @@ pub fn surface(rect: Rect, radius: u8) -> Shape {
             Color32::from_black_alpha(90),
             28.0,
         ),
-        gradient(rect.shrink(0.5), r, CARD_TOP, CARD, Along::Down),
+        gradient(
+            rect.shrink(0.5),
+            r,
+            CARD_TOP.gamma_multiply(0.9),
+            CARD.gamma_multiply(0.9),
+            Along::Down,
+        ),
         Shape::rect_stroke(
             rect,
             CornerRadius::same(radius),
-            Stroke::new(1.0, LINE),
+            Stroke::new(1.0, Color32::WHITE.gamma_multiply(0.07)),
             StrokeKind::Inside,
         ),
     ])
@@ -308,32 +319,31 @@ pub fn raised(rect: Rect, radius: u8, fill: Color32, edge: Color32) -> Shape {
     ])
 }
 
-/// The accent gradient, as on the main button.
-fn accent_fill(rect: Rect, radius: u8, lift: f32) -> Shape {
-    let (from, to) = (
-        lerp(ACCENT, Color32::WHITE, lift),
-        lerp(ACCENT_COOL, Color32::WHITE, lift),
-    );
-    Shape::Vec(vec![
-        gradient(rect.shrink(0.5), f32::from(radius), from, to, Along::Across),
-        Shape::rect_stroke(
-            rect,
-            CornerRadius::same(radius),
-            Stroke::new(1.0, lerp(from, to, 0.5)),
-            StrokeKind::Inside,
-        ),
-    ])
-}
-
-/// What is behind everything: near-black, lifted a little at the top, with
-/// a faint wash of the accent color in the corner the eye starts from.
-pub fn backdrop(painter: &Painter, rect: Rect) {
+/// What is behind everything: a dark stage, lit by the mouse's own lights.
+/// `focus` is where the drawing of the mouse is and half its height; with
+/// no drawing on the page the light comes down from above instead.
+pub fn backdrop(painter: &Painter, rect: Rect, focus: Option<(Pos2, f32)>, lights: [Color32; 3]) {
     painter.add(gradient(rect, 0.0, BG_TOP, BG, Along::Down));
-    painter.add(halo(
-        pos2(rect.left() + rect.width() * 0.62, rect.top() - 60.0),
-        vec2(rect.width() * 0.6, 380.0),
-        ACCENT.gamma_multiply(0.07),
-    ));
+    match focus {
+        Some((centre, half_height)) => {
+            for (color, offset) in lights.into_iter().zip([-0.62, 0.0, 0.62]) {
+                painter.add(halo(
+                    centre + vec2(0.0, offset * half_height),
+                    vec2(460.0, half_height * 0.95),
+                    color.gamma_multiply(0.27),
+                ));
+            }
+        }
+        None => {
+            for (color, across) in lights.into_iter().zip([0.2, 0.5, 0.8]) {
+                painter.add(halo(
+                    pos2(rect.left() + rect.width() * across, rect.top() - 40.0),
+                    vec2(rect.width() * 0.34, 330.0),
+                    color.gamma_multiply(0.13),
+                ));
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -371,17 +381,6 @@ pub fn panel<R>(ui: &mut Ui, margin: i8, add_contents: impl FnOnce(&mut Ui) -> R
     ui.painter()
         .set(behind, surface(shown.response.rect, CARD_RADIUS));
     shown.inner
-}
-
-/// The title at the top of a page.
-pub fn page_title(ui: &mut Ui, title: &str, subtitle: &str) {
-    ui.add_space(10.0);
-    ui.scope(|ui| {
-        ui.spacing_mut().item_spacing.y = 4.0;
-        ui.label(RichText::new(title).font(FontId::new(28.0, strong())));
-        ui.label(RichText::new(subtitle).color(TEXT_DIM));
-    });
-    ui.add_space(12.0);
 }
 
 /// The title of a card.
@@ -456,10 +455,15 @@ fn text_width(ui: &Ui, text: &str, font: &FontId) -> f32 {
 // Controls
 // ---------------------------------------------------------------------
 
-/// The main action on a screen.
+/// How wide [`primary_button`] will be, for laying out around it.
+pub fn primary_width(ui: &Ui, text: &str) -> f32 {
+    text_width(ui, text, &FontId::new(14.5, strong())) + 56.0
+}
+
+/// The main action on a screen: a white pill that lights what is under it.
 pub fn primary_button(ui: &mut Ui, enabled: bool, text: &str) -> Response {
     let font = FontId::new(14.5, strong());
-    let size = vec2(text_width(ui, text, &font) + 44.0, 40.0);
+    let size = vec2(primary_width(ui, text), 42.0);
     // A disabled button senses nothing, so it cannot report a click.
     let sense = if enabled {
         Sense::click()
@@ -468,44 +472,132 @@ pub fn primary_button(ui: &mut Ui, enabled: bool, text: &str) -> Response {
     };
     let (rect, response) = ui.allocate_exact_size(size, sense);
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, text));
-    focus_ring(ui, &response, rect, 10);
+    focus_ring(ui, &response, rect, 21);
     let painter = ui.painter();
+    let radius = CornerRadius::same(21);
     if enabled {
         let hot = response.hovered();
         let pressed = response.is_pointer_button_down_on();
-        // Light from the button on the bar beneath it.
         painter.add(glow(
-            rect.translate(vec2(0.0, 6.0)).shrink2(vec2(10.0, 6.0)),
-            10.0,
-            ACCENT.gamma_multiply(if hot { 0.42 } else { 0.26 }),
-            22.0,
+            rect.translate(vec2(0.0, 5.0)).shrink2(vec2(12.0, 6.0)),
+            21.0,
+            Color32::WHITE.gamma_multiply(if hot { 0.34 } else { 0.2 }),
+            26.0,
         ));
-        let lift = match (pressed, hot) {
-            (true, _) => 0.06,
-            (false, true) => 0.16,
-            (false, false) => 0.0,
+        let fill = match (pressed, hot) {
+            (true, _) => lerp(SELECT, Color32::BLACK, 0.12),
+            (false, true) => Color32::WHITE,
+            (false, false) => SELECT,
         };
-        painter.add(accent_fill(rect, 10, lift));
-        painter.line_segment(
-            [
-                pos2(rect.left() + 10.0, rect.top() + 1.0),
-                pos2(rect.right() - 10.0, rect.top() + 1.0),
-            ],
-            Stroke::new(1.0, Color32::from_white_alpha(70)),
-        );
-        painter.text(rect.center(), Align2::CENTER_CENTER, text, font, ON_ACCENT);
+        painter.rect_filled(rect, radius, fill);
+        painter.text(rect.center(), Align2::CENTER_CENTER, text, font, ON_SELECT);
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
-        painter.rect_filled(rect, CornerRadius::same(10), RAISED);
+        painter.rect_filled(rect, radius, Color32::WHITE.gamma_multiply(0.05));
         painter.rect_stroke(
             rect,
-            CornerRadius::same(10),
-            Stroke::new(1.0, LINE),
+            radius,
+            Stroke::new(1.0, Color32::WHITE.gamma_multiply(0.08)),
             StrokeKind::Inside,
         );
         painter.text(rect.center(), Align2::CENTER_CENTER, text, font, TEXT_FAINT);
         response
     }
+}
+
+/// The pages of the window as a row of tabs in one pill. Returns the tab
+/// that was clicked, if any.
+pub fn tabs<T: Copy + PartialEq>(ui: &mut Ui, current: T, options: &[(T, &str)]) -> Option<T> {
+    let font = FontId::proportional(14.0);
+    let widths: Vec<f32> = options
+        .iter()
+        .map(|(_, label)| text_width(ui, label, &font) + 32.0)
+        .collect();
+    let size = vec2(widths.iter().sum::<f32>() + 8.0, 40.0);
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    ui.painter().rect_filled(
+        rect,
+        CornerRadius::same(20),
+        Color32::WHITE.gamma_multiply(0.05),
+    );
+    ui.painter().rect_stroke(
+        rect,
+        CornerRadius::same(20),
+        Stroke::new(1.0, Color32::WHITE.gamma_multiply(0.08)),
+        StrokeKind::Inside,
+    );
+
+    let mut clicked = None;
+    let mut x = rect.left() + 4.0;
+    for ((value, label), width) in options.iter().zip(widths) {
+        let cell = Rect::from_min_size(pos2(x, rect.top() + 4.0), vec2(width, 32.0));
+        x += width;
+        let selected = *value == current;
+        let response = ui.interact(cell, ui.id().with(("tab", *label)), Sense::click());
+        response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, *label));
+        focus_ring(ui, &response, cell, 16);
+        let (ink, font) = if selected {
+            ui.painter()
+                .rect_filled(cell, CornerRadius::same(16), SELECT);
+            (ON_SELECT, FontId::new(14.0, strong()))
+        } else if response.hovered() {
+            ui.painter().rect_filled(
+                cell,
+                CornerRadius::same(16),
+                Color32::WHITE.gamma_multiply(0.07),
+            );
+            (TEXT, font.clone())
+        } else {
+            (TEXT_DIM, font.clone())
+        };
+        ui.painter()
+            .text(cell.center(), Align2::CENTER_CENTER, *label, font, ink);
+        if response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            clicked = Some(*value);
+        }
+    }
+    clicked
+}
+
+/// A label attached to a part of the drawing of the mouse: a pill of text,
+/// white when what it names is selected.
+pub fn tag(painter: &Painter, rect: Rect, text: &str, selected: bool, hovered: bool, ink: Color32) {
+    let radius = CornerRadius::same((rect.height() / 2.0) as u8);
+    if selected {
+        painter.rect_filled(rect, radius, SELECT);
+    } else {
+        painter.rect_filled(
+            rect,
+            radius,
+            lerp(SUNKEN, RAISED, if hovered { 1.0 } else { 0.35 }).gamma_multiply(0.92),
+        );
+        painter.rect_stroke(
+            rect,
+            radius,
+            Stroke::new(
+                1.0,
+                Color32::WHITE.gamma_multiply(if hovered { 0.3 } else { 0.14 }),
+            ),
+            StrokeKind::Inside,
+        );
+    }
+    let font = if selected {
+        FontId::new(12.5, strong())
+    } else {
+        FontId::proportional(12.5)
+    };
+    let ink = if selected { ON_SELECT } else { ink };
+    let galley = painter.layout_no_wrap(text.to_owned(), font, ink);
+    let at = pos2(
+        (rect.center().x - galley.size().x / 2.0).max(rect.left() + 10.0),
+        rect.center().y - galley.size().y / 2.0,
+    );
+    painter
+        .with_clip_rect(rect.shrink2(vec2(8.0, 0.0)))
+        .galley(at, galley, ink);
 }
 
 /// One of several equally weighted actions.
@@ -571,10 +663,17 @@ pub fn segmented<T: Copy + PartialEq>(ui: &mut Ui, current: T, options: &[(T, &s
     clicked
 }
 
-/// An on/off switch with its label. Returns whether it was flipped.
+/// An on/off switch with its label, which wraps if there is not room for
+/// it on one line. Returns whether the switch was flipped.
 pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
     let font = FontId::proportional(14.5);
-    let size = vec2(42.0 + 12.0 + text_width(ui, label, &font), 26.0);
+    let galley = ui.painter().layout(
+        label.to_owned(),
+        font,
+        TEXT,
+        (ui.available_width() - 54.0).max(80.0),
+    );
+    let size = vec2(54.0 + galley.size().x, galley.size().y.max(26.0));
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     if response.clicked() {
         *on = !*on;
@@ -582,7 +681,7 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
     let state = *on;
     response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, true, state, label));
 
-    let track = Rect::from_center_size(pos2(rect.left() + 21.0, rect.center().y), vec2(42.0, 24.0));
+    let track = Rect::from_min_size(rect.left_top() + vec2(0.0, 1.0), vec2(42.0, 24.0));
     focus_ring(ui, &response, track, 12);
     let t = ui.ctx().animate_bool_with_time(response.id, *on, 0.14);
     let painter = ui.painter();
@@ -619,11 +718,12 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
         5.0,
     ));
     painter.circle_filled(knob, 8.5, lerp(TEXT_DIM, Color32::WHITE, t));
-    painter.text(
-        pos2(track.right() + 12.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        label,
-        font,
+    painter.galley(
+        pos2(
+            track.right() + 12.0,
+            rect.top() + (26.0 - galley.rows[0].height()).max(0.0) / 2.0,
+        ),
+        galley,
         TEXT,
     );
     response

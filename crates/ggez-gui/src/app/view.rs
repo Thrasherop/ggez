@@ -2,7 +2,7 @@
 
 use eframe::egui::{
     self, pos2, vec2, Align, Align2, Color32, CornerRadius, FontId, Layout, Rect, RichText, Sense,
-    Stroke, StrokeKind, Ui, WidgetInfo, WidgetType,
+    Stroke, Ui, WidgetInfo, WidgetType,
 };
 use ggez_core::{key_names, media_names, Action, Button, ButtonMap, Link};
 use ggez_service::profile::DEFAULT_LIGHTING_MODES;
@@ -11,10 +11,8 @@ use ggez_service::Profile;
 use super::{App, Notice, Tab};
 use crate::device::Status;
 use crate::draft::{snap_dpi, Draft, Effect, MAX_DPI_PRESETS, POLLING_RATES};
-use crate::mouse_view::{self, Lights};
-use crate::theme::{
-    self, ACCENT, CARD, DANGER, GOOD, LINE, SIDEBAR, TEXT, TEXT_DIM, TEXT_FAINT, WARNING,
-};
+use crate::mouse_view::{self, Lights, Place};
+use crate::theme::{self, ACCENT, CARD, DANGER, GOOD, LINE, TEXT, TEXT_DIM, TEXT_FAINT, WARNING};
 
 const FIRST_RUN: &str = "These are the mouse's factory settings, not what is on your mouse now: the mouse cannot report its settings. Applying replaces everything on it, button bindings included.";
 
@@ -31,87 +29,86 @@ impl App {
             self.seen = self.draft.clone();
         }
 
+        // The stage is lit in the mouse's own colors. The rainbow only moves
+        // on the lighting page, where it is what the user is looking at.
+        let moving = self.tab == Tab::Lighting
+            && self.draft.effect == Effect::Rainbow
+            && self.light_level() > 0.0;
+        let time = if moving {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            ctx.input(|input| input.time) as f32
+        } else {
+            5.6
+        };
+        let lights = self.lights().colors(self.light_level(), time);
         theme::backdrop(
             &ctx.layer_painter(egui::LayerId::background()),
             ctx.screen_rect(),
+            mouse_view::take_focus(ctx),
+            lights,
         );
-        egui::SidePanel::left("sidebar")
-            .exact_width(244.0)
-            .resizable(false)
+        let margin = egui::Margin::symmetric(24, 0);
+        egui::TopBottomPanel::top("top")
+            .exact_height(68.0)
             .show_separator_line(false)
-            .frame(
-                egui::Frame::new()
-                    .fill(SIDEBAR)
-                    .inner_margin(egui::Margin::same(16)),
-            )
-            .show(ctx, |ui| self.sidebar(ui));
+            .frame(egui::Frame::new().inner_margin(margin))
+            .show(ctx, |ui| self.top_bar(ui));
         egui::TopBottomPanel::bottom("actions")
-            .exact_height(72.0)
+            .exact_height(80.0)
             .show_separator_line(false)
-            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(32, 0)))
+            .frame(egui::Frame::new().inner_margin(margin))
             .show(ctx, |ui| self.action_bar(ui));
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(32, 0)))
+            .frame(egui::Frame::new().inner_margin(margin))
             .show(ctx, |ui| {
+                let view_height = ui.available_height();
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.set_max_width(theme::PAGE_WIDTH);
-                        ui.add_space(16.0);
-                        self.banners(ui);
+                        let top = ui.cursor().top();
+                        column(ui, |ui| self.banners(ui));
+                        // What is left of the view for a page that fills it.
+                        let room = view_height - (ui.cursor().top() - top);
                         match self.tab {
-                            Tab::Sensitivity => self.sensitivity(ui),
-                            Tab::Buttons => self.buttons(ui),
-                            Tab::Lighting => self.lighting(ui),
-                            Tab::Power => self.power(ui),
-                            Tab::Settings => self.settings(ui),
+                            Tab::Buttons => self.buttons(ui, room, lights),
+                            Tab::Lighting => self.lighting(ui, room, lights),
+                            Tab::Sensitivity => column(ui, |ui| self.sensitivity(ui)),
+                            Tab::Power => column(ui, |ui| self.power(ui)),
+                            Tab::Settings => column(ui, |ui| self.settings(ui)),
                         }
-                        ui.add_space(20.0);
                     });
             });
         self.dialogs(ctx);
     }
 
-    fn sidebar(&mut self, ui: &mut Ui) {
-        // The device card keeps to the bottom whatever the window height.
-        egui::TopBottomPanel::bottom("sidebar-foot")
-            .frame(egui::Frame::NONE)
-            .show_separator_line(false)
-            .show_inside(ui, |ui| {
-                self.device_card(ui);
-                ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(6.0);
-                    ui.label(
-                        RichText::new(concat!("Version ", env!("CARGO_PKG_VERSION")))
-                            .color(TEXT_FAINT)
-                            .size(11.5),
-                    );
-                });
-            });
-        // The line between the sidebar and the page.
-        let edge = ui.max_rect().right() + 15.5;
-        ui.painter().vline(
-            edge,
-            ui.ctx().screen_rect().y_range(),
-            Stroke::new(1.0, LINE),
-        );
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 9.0;
-            ui.add_space(4.0);
-            theme::logo(ui, 26.0);
-            ui.label(RichText::new("ggez").font(FontId::new(24.0, theme::strong())));
-        });
-        ui.add_space(18.0);
-        self.profile_picker(ui);
+    /// The name, the pages, and at the far end the profile and the mouse.
+    fn top_bar(&mut self, ui: &mut Ui) {
+        let bar = ui.max_rect();
+        let part = |ui: &mut Ui, name: &str, rect: Rect, layout: Layout| {
+            ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt(name)
+                    .max_rect(rect)
+                    .layout(layout),
+            )
+        };
 
-        for (tab, name) in Tab::ALL {
-            if nav_item(ui, self.tab == tab, tab, name) {
-                self.tab = tab;
-                self.capturing_key = false;
-            }
+        let mut name = part(ui, "name", bar, Layout::left_to_right(Align::Center));
+        name.spacing_mut().item_spacing.x = 9.0;
+        theme::logo(&mut name, 24.0);
+        name.label(RichText::new("ggez").font(FontId::new(22.0, theme::strong())));
+
+        let middle = Rect::from_center_size(bar.center(), vec2(bar.width(), 40.0));
+        let mut pages = part(ui, "pages", middle, Layout::top_down(Align::Center));
+        if let Some(tab) = theme::tabs(&mut pages, self.tab, &Tab::ALL) {
+            self.tab = tab;
+            self.capturing_key = false;
         }
+
+        let mut end = part(ui, "end", bar, Layout::right_to_left(Align::Center));
+        end.spacing_mut().item_spacing.x = 14.0;
+        self.profile_picker(&mut end);
+        self.device_chip(&mut end);
     }
 
     /// The saved profiles: which one is in use, switching to another, and
@@ -120,16 +117,12 @@ impl App {
         if self.store.is_none() {
             return;
         }
-        ui.horizontal(|ui| {
-            ui.add_space(6.0);
-            theme::caption(ui, "Profile");
-        });
         let shown = self
             .current_profile
             .clone()
             .unwrap_or_else(|| "Not saved".to_string());
-        let opener = theme::dropdown_button(ui, &shown, ui.available_width())
-            .on_hover_text("Switch between saved setups, or save this one.");
+        let opener = theme::dropdown_button(ui, &shown, 150.0)
+            .on_hover_text("Profile: switch between saved setups, or save this one.");
         let popup = ui.id().with("profile-picker");
         if opener.clicked() {
             ui.memory_mut(|memory| memory.toggle_popup(popup));
@@ -206,11 +199,11 @@ impl App {
         if self.confirm_delete_profile.is_some() {
             ui.memory_mut(|memory| memory.close_popup());
         }
-        ui.add_space(14.0);
     }
 
-    /// Which mouse this is and how it is doing.
-    fn device_card(&mut self, ui: &mut Ui) {
+    /// Which mouse this is and how it is doing, in a few words; the rest
+    /// is shown when the pointer rests on it.
+    fn device_chip(&mut self, ui: &mut Ui) {
         let (color, title, detail) = match &self.status {
             Status::Unknown => (WARNING, "Looking for your mouse…", String::new()),
             Status::NoDevice => (
@@ -232,49 +225,68 @@ impl App {
                 },
             ),
         };
-        theme::panel(ui, 14, |ui| {
-            ui.spacing_mut().item_spacing.y = 5.0;
-            ui.label(RichText::new("Aerox 9 Wireless").font(FontId::new(14.5, theme::strong())));
-            ui.horizontal(|ui| {
-                theme::dot(ui, color);
-                ui.label(RichText::new(title).size(13.5));
-            });
-            if !detail.is_empty() {
-                ui.label(RichText::new(detail).color(TEXT_DIM).size(12.5));
-            }
-            if let Status::Connected {
+        let mut more = format!("Aerox 9 Wireless\n{title}");
+        if !detail.is_empty() {
+            more.push_str(&format!("\n{detail}"));
+        }
+        let (text, color) = match &self.status {
+            Status::Connected {
                 battery, firmware, ..
-            } = &self.status
-            {
-                ui.add_space(4.0);
+            } => {
+                if let Some(version) = firmware {
+                    more.push_str(&format!("\nFirmware {version}"));
+                }
                 match battery {
-                    Some((percent, charging)) => battery_bar(ui, *percent, *charging),
+                    Some((percent, true)) => (format!("Aerox 9 · {percent}%, charging"), color),
+                    Some((percent, false)) => (
+                        format!("Aerox 9 · {percent}%"),
+                        if *percent <= 15 { DANGER } else { color },
+                    ),
                     None => {
-                        ui.label(
-                            RichText::new("Battery level unavailable")
-                                .color(TEXT_DIM)
-                                .size(12.5),
-                        );
+                        more.push_str("\nBattery level unavailable");
+                        ("Aerox 9".to_string(), color)
                     }
                 }
-                if let Some(version) = firmware {
-                    ui.label(
-                        RichText::new(format!("Firmware {version}"))
-                            .color(TEXT_FAINT)
-                            .size(12.0),
-                    );
-                }
             }
+            _ => (title.to_string(), color),
+        };
+        // Laid out from the right: the words, then the light before them.
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.label(RichText::new(text).color(TEXT_DIM).size(13.5))
+                .on_hover_text(more);
+            theme::dot(ui, color);
         });
     }
 
+    /// Apply and Revert, floating in the middle, with what the window has
+    /// to say beside them.
     fn action_bar(&mut self, ui: &mut Ui) {
-        let line_y = ui.max_rect().top();
-        ui.painter()
-            .hline(ui.max_rect().x_range(), line_y, Stroke::new(1.0, LINE));
-        // The buttons are laid out first so that a long message wraps in
-        // the space left over instead of running underneath them.
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        let bar = ui.max_rect();
+        let width = 92.0 + 10.0 + theme::primary_width(ui, "Apply to mouse");
+        let middle = Rect::from_center_size(bar.center(), vec2(width, 42.0));
+        let mut buttons = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("buttons")
+                .max_rect(middle)
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        {
+            let ui = &mut buttons;
+            ui.spacing_mut().item_spacing.x = 10.0;
+            let revert = egui::Button::new("Revert")
+                .corner_radius(CornerRadius::same(21))
+                .min_size(vec2(92.0, 42.0));
+            let revert = ui
+                .add_enabled(self.draft != self.applied, revert)
+                .on_hover_text("Discard changes made since the last apply.");
+            theme::focus_ring(ui, &revert, revert.rect, 21);
+            if revert.clicked() {
+                self.draft = self.applied.clone();
+                self.select_button(self.selected_button);
+                self.notice = Notice::None;
+                self.preview_lighting();
+            }
             let can_apply = self.connected() && !self.applying;
             let apply = theme::primary_button(ui, can_apply, "Apply to mouse");
             let apply = if can_apply {
@@ -289,39 +301,35 @@ impl App {
             if can_apply && apply.clicked() {
                 self.request_apply();
             }
-            let revert = egui::Button::new("Revert").min_size(vec2(88.0, 40.0));
-            let revert = ui
-                .add_enabled(self.draft != self.applied, revert)
-                .on_hover_text("Discard changes made since the last apply.");
-            theme::focus_ring(ui, &revert, revert.rect, theme::CONTROL_RADIUS);
-            if revert.clicked() {
-                self.draft = self.applied.clone();
-                self.select_button(self.selected_button);
-                self.notice = Notice::None;
-                self.preview_lighting();
+        }
+
+        // A long message wraps in the space beside the buttons.
+        let beside = Rect::from_min_max(bar.left_top(), pos2(middle.left() - 20.0, bar.bottom()));
+        let mut note = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("notice")
+                .max_rect(beside)
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        let ui = &mut note;
+        let message = |ui: &mut Ui, color, text: &str| {
+            theme::dot(ui, color);
+            ui.add(egui::Label::new(RichText::new(text).color(color)).wrap());
+        };
+        match &self.notice {
+            Notice::None if self.is_dirty() => message(
+                ui,
+                WARNING,
+                "You have changes that are not on the mouse yet.",
+            ),
+            Notice::None => {}
+            Notice::Working(text) => {
+                ui.spinner();
+                ui.label(text);
             }
-            ui.add_space(8.0);
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                let message = |ui: &mut Ui, color, text: &str| {
-                    theme::dot(ui, color);
-                    ui.add(egui::Label::new(RichText::new(text).color(color)).wrap());
-                };
-                match &self.notice {
-                    Notice::None if self.is_dirty() => message(
-                        ui,
-                        WARNING,
-                        "You have changes that are not on the mouse yet.",
-                    ),
-                    Notice::None => {}
-                    Notice::Working(text) => {
-                        ui.spinner();
-                        ui.label(text);
-                    }
-                    Notice::Good(text) => message(ui, GOOD, text),
-                    Notice::Bad(text) => message(ui, DANGER, text),
-                }
-            });
-        });
+            Notice::Good(text) => message(ui, GOOD, text),
+            Notice::Bad(text) => message(ui, DANGER, text),
+        }
     }
 
     /// Things the user should know whatever page they are on.
@@ -374,11 +382,7 @@ impl App {
     }
 
     fn sensitivity(&mut self, ui: &mut Ui) {
-        theme::page_title(
-            ui,
-            "Sensitivity",
-            "How far the pointer travels when you move the mouse.",
-        );
+        ui.add_space(4.0);
         theme::card(ui, |ui| {
             theme::card_title(
                 ui,
@@ -475,52 +479,73 @@ impl App {
         });
     }
 
-    fn buttons(&mut self, ui: &mut Ui) {
-        theme::page_title(
+    /// The mouse on the stage with every button to click, and beside it a
+    /// panel for the one that is selected. `room` is the height there is
+    /// to fill.
+    fn buttons(&mut self, ui: &mut Ui, room: f32, lights: [Color32; 3]) {
+        let height = room.max(476.0);
+        let (stage, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+        // The drawing is 356 tall at its natural size and grows with the
+        // window, up to a point.
+        let k = ((height - 60.0) / 356.0).clamp(1.0, 1.25);
+        let center = pos2(stage.left() + stage.width() * 0.43, stage.center().y);
+        let clicked = mouse_view::buttons(
             ui,
-            "Buttons",
-            "Stored on the mouse: bindings work on any computer, and a key stays held for as long as you hold the button.",
+            Place { center, scale: k },
+            &self.draft.buttons,
+            self.selected_button,
+            lights,
+            &describe,
+            &button_title,
         );
-        theme::card(ui, |ui| {
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 18.0;
-                let lights = self.lights();
-                let clicked = mouse_view::buttons(
-                    ui,
-                    &self.draft.buttons,
-                    self.selected_button,
-                    (&lights, self.light_level()),
-                    &describe,
-                    &button_title,
-                );
-                if let Some(button) = clicked {
-                    self.select_button(button);
-                }
-                ui.vertical(|ui| self.button_editor(ui));
-            });
-        });
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            if theme::button(ui, "Reset all buttons")
-                .on_hover_text("Put every button back to its factory binding.")
-                .clicked()
-            {
-                self.confirm_reset = true;
-            }
-            let changed = Button::ALL
-                .into_iter()
-                .filter(|&b| self.draft.buttons.get(b) != ButtonMap::default().get(b))
-                .count();
-            if changed > 0 {
-                ui.label(
-                    RichText::new(format!(
-                        "{changed} of 20 differ from the factory layout, shown in teal."
-                    ))
+        if let Some(button) = clicked {
+            self.select_button(button);
+        }
+
+        let beside = Rect::from_min_max(
+            pos2(stage.right() - 284.0, stage.top() + 10.0),
+            stage.right_bottom(),
+        );
+        let mut editor = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("editor")
+                .max_rect(beside)
+                .layout(Layout::top_down(Align::Min)),
+        );
+        theme::panel(&mut editor, 18, |ui| self.button_editor(ui));
+
+        let corner = Rect::from_min_max(
+            pos2(stage.left(), stage.bottom() - 36.0),
+            pos2(center.x + 60.0, stage.bottom()),
+        );
+        let mut reset = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("reset")
+                .max_rect(corner)
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        if theme::button(&mut reset, "Reset all buttons")
+            .on_hover_text("Put every button back to its factory binding.")
+            .clicked()
+        {
+            self.confirm_reset = true;
+        }
+        let changed = Button::ALL
+            .into_iter()
+            .filter(|&b| self.draft.buttons.get(b) != ButtonMap::default().get(b))
+            .count();
+        if changed > 0 {
+            reset.label(
+                RichText::new(format!("{changed} of 20 changed, shown in teal."))
                     .color(TEXT_DIM)
                     .size(13.0),
-                );
-            }
-        });
+            );
+        }
+        // A short window scrolls to whatever did not fit on the stage.
+        let below = editor.min_rect().bottom() - stage.bottom();
+        if below > 0.0 {
+            ui.add_space(below);
+        }
     }
 
     fn button_editor(&mut self, ui: &mut Ui) {
@@ -832,112 +857,125 @@ impl App {
         self.capturing_key = false;
     }
 
-    fn lighting(&mut self, ui: &mut Ui) {
-        theme::page_title(
-            ui,
-            "Lighting",
-            "What the three light zones show while this computer is driving them.",
-        );
+    /// The mouse on the stage, glowing as it will; each zone's color beside
+    /// that zone, and the rest of the lighting settings in a panel.
+    fn lighting(&mut self, ui: &mut Ui, room: f32, lights: [Color32; 3]) {
+        let height = room.max(480.0);
+        let (stage, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+        let part = |ui: &mut Ui, name: &str, rect: Rect, layout: Layout| {
+            ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt(name)
+                    .max_rect(rect)
+                    .layout(layout),
+            )
+        };
         let mut changed = false;
-        theme::card(ui, |ui| {
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 30.0;
-                mouse_view::lighting(ui, &self.lights(), self.light_level());
-                ui.vertical(|ui| {
-                    // Everything in this column is placed by hand so that each
-                    // zone's controls sit level with that zone in the drawing.
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    const SWITCH: f32 = 36.0;
-                    const ROW: f32 = 44.0;
-                    let options = [
-                        (Effect::Static, "Static colors"),
-                        (Effect::Rainbow, "Rainbow"),
-                    ];
-                    if let Some(effect) = theme::segmented(ui, self.draft.effect, &options) {
-                        if self.draft.effect != effect {
-                            self.draft.effect = effect;
-                            changed = true;
-                        }
-                    }
-                    let mut used = SWITCH;
-                    match self.draft.effect {
-                        Effect::Static => {
-                            for (index, name) in ["Front", "Palm", "Wrist"].into_iter().enumerate()
-                            {
-                                let (start, end) = mouse_view::ZONE_BANDS[index];
-                                let center = (start + end) / 2.0 * mouse_view::LIGHTING_HEIGHT;
-                                ui.add_space((center - ROW / 2.0 - used).max(8.0));
-                                used = center + ROW / 2.0;
-                                ui.allocate_ui(vec2(ui.available_width(), ROW), |ui| {
-                                    ui.horizontal_centered(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 14.0;
-                                        changed |= theme::swatch(
-                                            ui,
-                                            &mut self.draft.zones[index],
-                                            &format!("{name} color"),
-                                        );
-                                        ui.vertical(|ui| {
-                                            ui.add_space(4.0);
-                                            ui.label(
-                                                RichText::new(name)
-                                                    .font(FontId::new(14.5, theme::strong())),
-                                            );
-                                            let [r, g, b] = self.draft.zones[index];
-                                            ui.label(
-                                                RichText::new(format!("#{r:02x}{g:02x}{b:02x}"))
-                                                    .monospace()
-                                                    .color(TEXT_DIM)
-                                                    .size(12.0),
-                                            );
-                                        });
-                                    });
-                                });
-                            }
-                            ui.add_space(14.0);
-                            if theme::button(ui, "Use the front color everywhere").clicked() {
-                                self.draft.zones = [self.draft.zones[0]; 3];
-                                changed = true;
-                            }
-                        }
-                        Effect::Rainbow => {
-                            ui.add_space(22.0);
-                            ui.label(
-                                RichText::new("The mouse cycles through colors by itself.")
-                                    .font(FontId::new(15.0, theme::strong())),
-                            );
-                            ui.add_space(6.0);
-                            hint(
-                                ui,
-                                "This effect is built into the mouse, so it keeps running without ggez. Its speed and colors are fixed.",
-                            );
-                        }
-                    }
-                });
-            });
-            if self.draft.effect == Effect::Static {
-                ui.add_space(4.0);
+
+        // Which effect, above the mouse.
+        let top = Rect::from_min_size(stage.left_top(), vec2(stage.width(), 40.0));
+        let mut switch = part(ui, "effect", top, Layout::top_down(Align::Center));
+        let options = [
+            (Effect::Static, "Static colors"),
+            (Effect::Rainbow, "Rainbow"),
+        ];
+        if let Some(effect) = theme::segmented(&mut switch, self.draft.effect, &options) {
+            if self.draft.effect != effect {
+                self.draft.effect = effect;
+                changed = true;
+            }
+        }
+
+        let k = ((height - 84.0) / mouse_view::LIGHTING_HEIGHT).clamp(1.0, 1.3);
+        let center = pos2(
+            stage.center().x,
+            stage.top() + 58.0 + mouse_view::LIGHTING_HEIGHT / 2.0 * k,
+        );
+        let zones = mouse_view::lighting(ui, Place { center, scale: k }, lights);
+
+        // Beside the mouse: each zone's color, level with that zone.
+        let column = zones[1].x + 54.0;
+        match self.draft.effect {
+            Effect::Static => {
+                for (index, name) in ["Front", "Palm", "Wrist"].into_iter().enumerate() {
+                    let zone = zones[index];
+                    ui.painter().line_segment(
+                        [zone + vec2(8.0, 0.0), pos2(column - 12.0, zone.y)],
+                        Stroke::new(1.0, Color32::WHITE.gamma_multiply(0.3)),
+                    );
+                    ui.painter().circle_filled(
+                        zone + vec2(8.0, 0.0),
+                        2.6,
+                        Color32::WHITE.gamma_multiply(0.6),
+                    );
+                    let row = Rect::from_min_max(
+                        pos2(column, zone.y - 22.0),
+                        pos2(stage.right(), zone.y + 22.0),
+                    );
+                    let mut row = part(ui, name, row, Layout::left_to_right(Align::Center));
+                    row.spacing_mut().item_spacing.x = 14.0;
+                    changed |= theme::swatch(
+                        &mut row,
+                        &mut self.draft.zones[index],
+                        &format!("{name} color"),
+                    );
+                    row.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(name).font(FontId::new(14.5, theme::strong())));
+                        let [r, g, b] = self.draft.zones[index];
+                        ui.label(
+                            RichText::new(format!("#{r:02x}{g:02x}{b:02x}"))
+                                .monospace()
+                                .color(TEXT_DIM)
+                                .size(12.0),
+                        );
+                    });
+                }
+                let under = Rect::from_min_max(
+                    pos2(column, zones[2].y + 32.0),
+                    pos2(stage.right(), zones[2].y + 70.0),
+                );
+                let mut under = part(ui, "same", under, Layout::left_to_right(Align::Center));
+                if theme::button(&mut under, "Use the front color everywhere").clicked() {
+                    self.draft.zones = [self.draft.zones[0]; 3];
+                    changed = true;
+                }
+            }
+            Effect::Rainbow => {
+                let words = Rect::from_min_max(
+                    pos2(column, zones[1].y - 44.0),
+                    pos2((column + 290.0).min(stage.right()), stage.bottom()),
+                );
+                let mut words = part(ui, "rainbow", words, Layout::top_down(Align::Min));
+                words.label(
+                    RichText::new("The mouse cycles through colors by itself.")
+                        .font(FontId::new(15.0, theme::strong())),
+                );
+                hint(
+                    &mut words,
+                    "This effect is built into the mouse, so it keeps running without ggez. Its speed and colors are fixed.",
+                );
+            }
+        }
+
+        // Everything else about the lights, in a panel on the other side.
+        let side = Rect::from_min_max(
+            stage.left_top() + vec2(0.0, 10.0),
+            pos2(stage.left() + 316.0, stage.bottom()),
+        );
+        let mut side = part(ui, "settings", side, Layout::top_down(Align::Min));
+        theme::panel(&mut side, 18, |ui| {
+            if self.draft.battery_saver {
                 theme::callout(
                     ui,
                     WARNING,
-                    "The mouse does not remember static colors. ggez sends them again whenever the mouse connects or wakes, so they need ggez running (see Settings).",
+                    "Battery saver is on (see Power), so the lights stay off until you turn it off.",
                 );
             }
-            ui.add_space(4.0);
-            theme::toggle(
-                ui,
-                &mut self.live_preview,
-                "Show lighting changes on the mouse as I make them",
-            );
-        });
-
-        ui.add_space(6.0);
-        theme::card(ui, |ui| {
-            theme::card_title(
-                ui,
-                "Brightness",
-                "How bright the lights are. Stored on the mouse.",
-            );
+            theme::caption(ui, "Brightness");
             ui.horizontal(|ui| {
+                ui.spacing_mut().slider_width = 214.0;
                 changed |= theme::slider(
                     ui,
                     &mut self.draft.brightness,
@@ -946,77 +984,80 @@ impl App {
                     false,
                     "Brightness",
                 )
-                .on_hover_text("The mouse has 16 brightness steps.")
+                .on_hover_text("Stored on the mouse, which has 16 brightness steps.")
                 .changed();
                 let text = match self.draft.brightness {
                     0 => "Off".to_string(),
                     percent => format!("{percent}%"),
                 };
-                ui.label(RichText::new(text).font(FontId::new(15.0, theme::strong())));
+                ui.label(RichText::new(text).font(FontId::new(14.5, theme::strong())));
             });
-            ui.add_space(4.0);
+            ui.add_space(2.0);
             changed |= theme::toggle(
                 ui,
                 &mut self.draft.smart_lighting,
                 "Turn the lights off while the mouse is moving",
             );
-            hint(
+            ui.add_space(8.0);
+
+            theme::caption(ui, "Click flash");
+            let mut flash = self.draft.reactive.is_some();
+            ui.horizontal(|ui| {
+                if theme::toggle(ui, &mut flash, "Flash on click") {
+                    self.draft.reactive = flash.then_some([255, 255, 255]);
+                    changed = true;
+                }
+                if let Some(color) = &mut self.draft.reactive {
+                    changed |= theme::swatch(ui, color, "Flash color");
+                }
+            });
+            ui.add_space(8.0);
+
+            theme::caption(ui, "Without ggez");
+            egui::ComboBox::from_id_salt("default-lighting")
+                .icon(list_mark)
+                .selected_text(default_lighting_title(self.draft.default_lighting))
+                .width(ui.available_width())
+                .show_ui(ui, |ui| {
+                    for index in 0..DEFAULT_LIGHTING_MODES.len() {
+                        ui.selectable_value(
+                            &mut self.draft.default_lighting,
+                            index,
+                            default_lighting_title(index),
+                        );
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "What the mouse shows on its own after power-on. Stored on the mouse.",
+                );
+            ui.add_space(8.0);
+
+            theme::toggle(
                 ui,
-                "Your hand covers most of the lights while you use the mouse. They come back when it stops.",
+                &mut self.live_preview,
+                "Show lighting changes on the mouse as I make them",
             );
-            if self.draft.battery_saver {
-                ui.add_space(4.0);
-                theme::callout(
+            if self.draft.effect == Effect::Static {
+                ui.add_space(2.0);
+                hint(
                     ui,
-                    WARNING,
-                    "Battery saver is on (see Power), so the lights stay off until you turn it off.",
+                    "The mouse does not remember static colors. ggez sends them again whenever the mouse connects or wakes, so they need ggez running (see Settings).",
                 );
             }
         });
-
-        ui.add_space(6.0);
-        ui.columns(2, |columns| {
-            theme::card(&mut columns[0], |ui| {
-                theme::card_title(ui, "Click flash", "Flash a color every time you click.");
-                let mut flash = self.draft.reactive.is_some();
-                ui.horizontal(|ui| {
-                    if theme::toggle(ui, &mut flash, "Flash on click") {
-                        self.draft.reactive = flash.then_some([255, 255, 255]);
-                        changed = true;
-                    }
-                    if let Some(color) = &mut self.draft.reactive {
-                        changed |= theme::swatch(ui, color, "Flash color");
-                    }
-                });
-            });
-            theme::card(&mut columns[1], |ui| {
-                theme::card_title(
-                    ui,
-                    "Without ggez",
-                    "What the mouse shows on its own after power-on. Stored on the mouse.",
-                );
-                egui::ComboBox::from_id_salt("default-lighting")
-                    .icon(list_mark)
-                    .selected_text(default_lighting_title(self.draft.default_lighting))
-                    .width(ui.available_width().min(260.0))
-                    .show_ui(ui, |ui| {
-                        for index in 0..DEFAULT_LIGHTING_MODES.len() {
-                            ui.selectable_value(
-                                &mut self.draft.default_lighting,
-                                index,
-                                default_lighting_title(index),
-                            );
-                        }
-                    });
-            });
-        });
+        // A short window scrolls to whatever did not fit on the stage.
+        let below = side.min_rect().bottom() - stage.bottom();
+        if below > 0.0 {
+            ui.add_space(below);
+        }
         if changed {
             self.preview_lighting();
         }
     }
 
     fn power(&mut self, ui: &mut Ui) {
-        theme::page_title(ui, "Power", "Trade a little convenience for battery life.");
+        ui.add_space(4.0);
         theme::card(ui, |ui| {
             theme::card_title(ui, "Battery", "");
             match &self.status {
@@ -1133,7 +1174,7 @@ impl App {
     }
 
     fn settings(&mut self, ui: &mut Ui) {
-        theme::page_title(ui, "Settings", "How ggez itself behaves.");
+        ui.add_space(4.0);
         theme::card(ui, |ui| {
             theme::card_title(
                 ui,
@@ -1347,134 +1388,26 @@ impl App {
     }
 }
 
-/// One entry in the sidebar. Returns whether it was clicked.
-fn nav_item(ui: &mut Ui, selected: bool, tab: Tab, name: &str) -> bool {
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
-    response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, name));
-    theme::focus_ring(ui, &response, rect, theme::CONTROL_RADIUS);
-    let radius = CornerRadius::same(10);
-    let ink = if selected {
-        // Lit from the left by its marker.
-        ui.painter().add(theme::gradient(
-            rect,
-            10.0,
-            ACCENT.gamma_multiply(0.17),
-            Color32::WHITE.gamma_multiply(0.03),
-            theme::Along::Across,
-        ));
-        let bar = Rect::from_min_size(rect.left_top() + vec2(0.0, 11.0), vec2(3.0, 18.0));
-        ui.painter().add(theme::glow(
-            bar.translate(vec2(3.0, 0.0)),
-            3.0,
-            ACCENT.gamma_multiply(0.5),
-            8.0,
-        ));
-        ui.painter().rect_filled(bar, CornerRadius::same(2), ACCENT);
-        TEXT
-    } else if response.hovered() {
-        ui.painter()
-            .rect_filled(rect, radius, Color32::WHITE.gamma_multiply(0.05));
-        TEXT
-    } else {
-        TEXT_DIM
-    };
-    let icon_color = if selected { ACCENT } else { ink };
-    nav_icon(
-        ui,
-        tab,
-        pos2(rect.left() + 24.0, rect.center().y),
-        icon_color,
+/// A column in the middle of the page for a page's cards, no wider than
+/// is comfortable to read.
+fn column(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
+    let width = ui.available_width().min(theme::PAGE_WIDTH);
+    let left = ui.max_rect().center().x - width / 2.0;
+    let rect = Rect::from_min_max(
+        pos2(left, ui.cursor().top()),
+        pos2(left + width, ui.max_rect().bottom()),
     );
-    let font = if selected {
-        FontId::new(14.5, theme::strong())
-    } else {
-        FontId::proportional(14.5)
-    };
-    ui.painter().text(
-        pos2(rect.left() + 46.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        name,
-        font,
-        ink,
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(Layout::top_down(Align::Min)),
     );
-    response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-}
-
-/// A small line drawing for each page.
-fn nav_icon(ui: &Ui, tab: Tab, c: egui::Pos2, color: Color32) {
-    let p = ui.painter();
-    let stroke = Stroke::new(1.6, color);
-    match tab {
-        Tab::Sensitivity => {
-            p.circle_stroke(c, 6.0, stroke);
-            p.circle_filled(c, 1.8, color);
-            for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
-                p.line_segment([c + vec2(dx, dy) * 6.0, c + vec2(dx, dy) * 9.0], stroke);
-            }
-        }
-        Tab::Buttons => {
-            for (dx, dy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-                let cell = Rect::from_center_size(c + vec2(dx, dy) * 4.5, vec2(6.0, 6.0));
-                p.rect_stroke(cell, CornerRadius::same(2), stroke, StrokeKind::Inside);
-            }
-        }
-        Tab::Lighting => {
-            p.circle_stroke(c, 4.0, stroke);
-            for i in 0..8 {
-                let angle = i as f32 * std::f32::consts::TAU / 8.0;
-                let dir = vec2(angle.cos(), angle.sin());
-                p.line_segment([c + dir * 6.5, c + dir * 9.0], stroke);
-            }
-        }
-        Tab::Power => {
-            let body = Rect::from_center_size(c - vec2(1.0, 0.0), vec2(15.0, 9.0));
-            p.rect_stroke(body, CornerRadius::same(2), stroke, StrokeKind::Inside);
-            p.line_segment(
-                [
-                    pos2(body.right() + 2.0, c.y - 2.0),
-                    pos2(body.right() + 2.0, c.y + 2.0),
-                ],
-                stroke,
-            );
-            p.rect_filled(
-                Rect::from_min_max(
-                    body.min + vec2(2.5, 2.5),
-                    pos2(body.center().x + 1.0, body.max.y - 2.5),
-                ),
-                CornerRadius::same(1),
-                color,
-            );
-        }
-        Tab::Settings => {
-            for (dy, knob) in [(-5.0, 3.0), (0.0, -3.0), (5.0, 1.0)] {
-                p.line_segment([c + vec2(-8.0, dy), c + vec2(8.0, dy)], stroke);
-                p.circle_filled(c + vec2(knob, dy), 2.6, color);
-            }
-        }
+    add_contents(&mut child);
+    let used = child.min_rect();
+    if used.height() > 0.0 {
+        ui.allocate_rect(used, Sense::hover());
+        ui.add_space(16.0);
     }
-}
-
-fn battery_bar(ui: &mut Ui, percent: u8, charging: bool) {
-    let color = if percent <= 15 && !charging {
-        DANGER
-    } else {
-        ACCENT
-    };
-    let text = if charging {
-        format!("{percent}% · charging")
-    } else {
-        format!("{percent}%")
-    };
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Battery").color(TEXT_DIM).size(12.5));
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.label(RichText::new(text).size(12.5));
-        });
-    });
-    theme::meter(ui, 6.0, f32::from(percent) / 100.0, color)
-        .on_hover_text("Battery level, in steps of 5%");
 }
 
 /// All the CPI levels on one line, so their spread can be seen at a glance.
