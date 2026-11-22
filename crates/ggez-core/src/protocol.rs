@@ -40,8 +40,6 @@ pub enum ProtoError {
     BadButton(String),
     #[error("unknown action {0:?} (use disabled, left, right, middle, back, forward, dpi, scroll-up, scroll-down, key:<name>, media:<name>)")]
     BadAction(String),
-    #[error("button remapping is only supported through the 2.4 GHz dongle so far")]
-    ButtonsNeedDongle,
 }
 
 /// How the mouse is connected. Determines the command flag.

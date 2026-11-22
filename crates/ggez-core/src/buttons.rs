@@ -1,7 +1,8 @@
 //! Button remapping.
 //!
 //! Worked out from USB captures of SteelSeries GG talking to an Aerox 9
-//! Wireless through its 2.4 GHz dongle (firmware 1.2.4). The mouse holds a
+//! Wireless through its 2.4 GHz dongle (firmware 1.2.4). The cable takes
+//! the same packets without the wireless flag (0x2A instead of 0x6A). The mouse holds a
 //! table of 20 slots, five bytes each: `[kind, parameter, 0, 0, 0]`. GG
 //! always rewrites the whole table, as three 64-byte zero-padded packets
 //! `6a <part> <slots...>` holding 6, 6 and 8 slots.
@@ -29,8 +30,9 @@ const SLOT_COUNT: usize = 20;
 const SLOT_LEN: usize = 5;
 /// Slots carried by each of the three packets.
 const PARTS: [std::ops::Range<usize>; 3] = [0..6, 6..12, 12..20];
-/// Command 0x2A with the wireless flag.
-const COMMAND_WIRELESS: u8 = 0x6A;
+const COMMAND: u8 = 0x2A;
+/// Added to the command byte when talking through the 2.4 GHz dongle.
+const WIRELESS_FLAG: u8 = 0x40;
 const PACKET_LEN: usize = 64;
 
 const KIND_DISABLED: u8 = 0x00;
@@ -258,23 +260,23 @@ impl ButtonMap {
     }
 
     /// The packets (without report ID) that write this map to the mouse.
-    pub fn packets(&self, link: Link) -> Result<Vec<Vec<u8>>, ProtoError> {
-        if link == Link::Wired {
-            // The cable's framing for this command has not been captured.
-            return Err(ProtoError::ButtonsNeedDongle);
-        }
-        Ok(PARTS
+    pub fn packets(&self, link: Link) -> Vec<Vec<u8>> {
+        let command = match link {
+            Link::Wired => COMMAND,
+            Link::Wireless => COMMAND | WIRELESS_FLAG,
+        };
+        PARTS
             .iter()
             .enumerate()
             .map(|(part, range)| {
-                let mut packet = vec![COMMAND_WIRELESS, part as u8];
+                let mut packet = vec![command, part as u8];
                 for action in &self.slots[range.clone()] {
                     packet.extend(action.encode());
                 }
                 packet.resize(PACKET_LEN, 0);
                 packet
             })
-            .collect())
+            .collect()
     }
 }
 
@@ -465,7 +467,7 @@ mod tests {
         map.set(Button::Grid(11), Action::Disabled);
         map.set(Button::Grid(12), Action::Disabled);
 
-        let packets = map.packets(Link::Wireless).unwrap();
+        let packets = map.packets(Link::Wireless);
         assert!(packets.iter().all(|p| p.len() == 64));
         assert_eq!(
             unpadded(&packets[0]),
@@ -531,7 +533,15 @@ mod tests {
     }
 
     #[test]
-    fn cable_is_refused() {
-        assert!(ButtonMap::default().packets(Link::Wired).is_err());
+    fn cable_uses_the_same_packets_without_the_wireless_flag() {
+        let map = ButtonMap::default();
+        let wired = map.packets(Link::Wired);
+        let wireless = map.packets(Link::Wireless);
+        assert_eq!(wired.len(), 3);
+        for (w, r) in wired.iter().zip(&wireless) {
+            assert_eq!(w[0], 0x2A);
+            assert_eq!(r[0], 0x6A);
+            assert_eq!(w[1..], r[1..]);
+        }
     }
 }

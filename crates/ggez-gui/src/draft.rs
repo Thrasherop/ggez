@@ -105,8 +105,16 @@ impl Draft {
         draft.reactive = profile.reactive.as_deref().and_then(parse_color);
 
         let colors = &profile.colors;
-        let zone = |own: &Option<String>| own.as_ref().or(colors.all.as_ref()).and_then(|c| parse_color(c));
-        let zones = [zone(&colors.top), zone(&colors.middle), zone(&colors.bottom)];
+        let zone = |own: &Option<String>| {
+            own.as_ref()
+                .or(colors.all.as_ref())
+                .and_then(|c| parse_color(c))
+        };
+        let zones = [
+            zone(&colors.top),
+            zone(&colors.middle),
+            zone(&colors.bottom),
+        ];
         if zones.iter().any(Option::is_some) {
             draft.effect = Effect::Static;
         }
@@ -121,7 +129,9 @@ impl Draft {
 
         if let Some(bindings) = &profile.buttons {
             for (button, action) in bindings {
-                if let (Ok(button), Ok(action)) = (button.parse::<Button>(), action.parse::<Action>()) {
+                if let (Ok(button), Ok(action)) =
+                    (button.parse::<Button>(), action.parse::<Action>())
+                {
                     draft.buttons.set(button, action);
                 }
             }
@@ -195,17 +205,21 @@ mod tests {
 
     #[test]
     fn edited_draft_round_trips_through_the_file_format() {
-        let mut draft = Draft::default();
-        draft.dpi = vec![800, 1600];
-        draft.dpi_selected = 1;
-        draft.polling = 500;
-        draft.sleep_minutes = 0;
-        draft.dim_seconds = 600;
-        draft.default_lighting = 0;
-        draft.effect = Effect::Static;
-        draft.zones = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
-        draft.reactive = Some([255, 0, 0]);
-        draft.buttons.set(Button::Grid(12), "key:ctrl+v".parse().unwrap());
+        let mut draft = Draft {
+            dpi: vec![800, 1600],
+            dpi_selected: 1,
+            polling: 500,
+            sleep_minutes: 0,
+            dim_seconds: 600,
+            default_lighting: 0,
+            effect: Effect::Static,
+            zones: [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
+            reactive: Some([255, 0, 0]),
+            ..Draft::default()
+        };
+        draft
+            .buttons
+            .set(Button::Grid(12), "key:ctrl+v".parse().unwrap());
         draft.buttons.set(Button::TiltLeft, Action::Disabled);
 
         let text = draft.to_profile().to_toml().unwrap();
@@ -213,7 +227,10 @@ mod tests {
         reread.validate().unwrap();
         assert_eq!(Draft::from_profile(&reread), draft);
         assert!(text.contains("g12 = \"key:ctrl+v\""), "{text}");
-        assert!(!text.contains("g1 ="), "factory bindings are left out: {text}");
+        assert!(
+            !text.contains("g1 ="),
+            "factory bindings are left out: {text}"
+        );
     }
 
     #[test]

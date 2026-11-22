@@ -22,7 +22,9 @@ struct DesktopHost;
 
 impl app::Host for DesktopHost {
     fn autostart_enabled(&self) -> Result<bool, String> {
-        autostart::location().map(|l| l.is_some()).map_err(|e| format!("{e:#}"))
+        autostart::location()
+            .map(|l| l.is_some())
+            .map_err(|e| format!("{e:#}"))
     }
 
     fn set_autostart(&mut self, enabled: bool) -> Result<(), String> {
@@ -42,7 +44,9 @@ impl app::Host for DesktopHost {
     }
 
     fn pick_open_path(&mut self) -> Option<PathBuf> {
-        rfd::FileDialog::new().add_filter("ggez profile", &["toml"]).pick_file()
+        rfd::FileDialog::new()
+            .add_filter("ggez profile", &["toml"])
+            .pick_file()
     }
 
     fn reveal(&mut self, path: &Path) {
@@ -69,6 +73,35 @@ struct Window(app::App);
 impl eframe::App for Window {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.0.ui(ctx);
+    }
+}
+
+/// The window icon: a teal ring on a dark rounded square, drawn here so the
+/// program needs no image files.
+fn icon() -> egui::IconData {
+    const SIZE: usize = 64;
+    let mut rgba = Vec::with_capacity(SIZE * SIZE * 4);
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let (dx, dy) = (x as f32 - 31.5, y as f32 - 31.5);
+            let distance = (dx * dx + dy * dy).sqrt();
+            // Rounded square: inside unless in a corner beyond the radius.
+            let (cx, cy) = ((dx.abs() - 20.0).max(0.0), (dy.abs() - 20.0).max(0.0));
+            let inside = (cx * cx + cy * cy).sqrt() <= 11.5;
+            let pixel: [u8; 4] = if !inside {
+                [0, 0, 0, 0]
+            } else if (13.0..=20.0).contains(&distance) || distance <= 4.5 {
+                [45, 212, 191, 255]
+            } else {
+                [24, 24, 27, 255]
+            };
+            rgba.extend_from_slice(&pixel);
+        }
+    }
+    egui::IconData {
+        rgba,
+        width: SIZE as u32,
+        height: SIZE as u32,
     }
 }
 
@@ -108,6 +141,7 @@ fn main() -> anyhow::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("ggez")
+            .with_icon(Arc::new(icon()))
             .with_inner_size([1000.0, 700.0])
             .with_min_inner_size([860.0, 560.0]),
         ..Default::default()

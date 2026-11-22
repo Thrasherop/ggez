@@ -88,7 +88,11 @@ impl App {
         helper_running_here: bool,
     ) -> Self {
         let mut notice = Notice::None;
-        let draft = match profile_path.as_deref().filter(|p| p.exists()).map(Profile::load) {
+        let draft = match profile_path
+            .as_deref()
+            .filter(|p| p.exists())
+            .map(Profile::load)
+        {
             Some(Ok(profile)) => Draft::from_profile(&profile),
             Some(Err(e)) => {
                 notice = Notice::Bad(format!("Could not read your saved profile: {e:#}"));
@@ -202,17 +206,19 @@ impl App {
             .exact_height(56.0)
             .show(ctx, |ui| self.action_bar(ui));
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                ui.add_space(8.0);
-                match self.tab {
-                    Tab::Sensitivity => self.sensitivity(ui),
-                    Tab::Buttons => self.buttons(ui),
-                    Tab::Lighting => self.lighting(ui),
-                    Tab::Power => self.power(ui),
-                    Tab::Settings => self.settings(ui),
-                }
-                ui.add_space(16.0);
-            });
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.add_space(8.0);
+                    match self.tab {
+                        Tab::Sensitivity => self.sensitivity(ui),
+                        Tab::Buttons => self.buttons(ui),
+                        Tab::Lighting => self.lighting(ui),
+                        Tab::Power => self.power(ui),
+                        Tab::Settings => self.settings(ui),
+                    }
+                    ui.add_space(16.0);
+                });
         });
         self.dialogs(ctx);
     }
@@ -247,13 +253,18 @@ impl App {
                 ),
             };
             ui.horizontal(|ui| {
-                ui.label(RichText::new("●").color(dot));
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
+                ui.painter().circle_filled(rect.center(), 5.0, dot);
                 ui.label(RichText::new(title).strong());
             });
             if !detail.is_empty() {
                 ui.label(RichText::new(detail).weak());
             }
-            if let Status::Connected { battery, firmware, .. } = &self.status {
+            if let Status::Connected {
+                battery, firmware, ..
+            } = &self.status
+            {
                 ui.add_space(6.0);
                 match battery {
                     Some((percent, charging)) => {
@@ -262,7 +273,11 @@ impl App {
                         } else {
                             format!("{percent}%")
                         };
-                        let color = if *percent <= 15 && !*charging { DANGER } else { ACCENT };
+                        let color = if *percent <= 15 && !*charging {
+                            DANGER
+                        } else {
+                            ACCENT
+                        };
                         ui.add(
                             egui::ProgressBar::new(f32::from(*percent) / 100.0)
                                 .text(text)
@@ -294,7 +309,11 @@ impl App {
 
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             ui.add_space(8.0);
-            ui.label(RichText::new(concat!("ggez ", env!("CARGO_PKG_VERSION"))).weak().small());
+            ui.label(
+                RichText::new(concat!("ggez ", env!("CARGO_PKG_VERSION")))
+                    .weak()
+                    .small(),
+            );
         });
     }
 
@@ -302,7 +321,10 @@ impl App {
         ui.horizontal_centered(|ui| {
             match &self.notice {
                 Notice::None if self.is_dirty() => {
-                    ui.label(RichText::new("You have changes that are not on the mouse yet.").color(WARNING));
+                    ui.label(
+                        RichText::new("You have changes that are not on the mouse yet.")
+                            .color(WARNING),
+                    );
                 }
                 Notice::None => {}
                 Notice::Working(text) => {
@@ -311,7 +333,10 @@ impl App {
                 }
                 Notice::Good(text) if self.is_dirty() => {
                     let _ = text;
-                    ui.label(RichText::new("You have changes that are not on the mouse yet.").color(WARNING));
+                    ui.label(
+                        RichText::new("You have changes that are not on the mouse yet.")
+                            .color(WARNING),
+                    );
                 }
                 Notice::Good(text) => {
                     ui.label(RichText::new(text).color(GOOD));
@@ -322,14 +347,20 @@ impl App {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let can_apply = self.connected() && !self.applying;
-                let apply = egui::Button::new(RichText::new("Apply to mouse").strong().color(Color32::BLACK))
-                    .fill(ACCENT)
-                    .min_size(egui::vec2(140.0, 34.0));
-                let response = ui.add_enabled(can_apply, apply).on_disabled_hover_text(if self.applying {
-                    "Still applying the previous changes."
-                } else {
-                    "Connect the mouse first."
-                });
+                let apply = egui::Button::new(
+                    RichText::new("Apply to mouse")
+                        .strong()
+                        .color(Color32::BLACK),
+                )
+                .fill(ACCENT)
+                .min_size(egui::vec2(140.0, 34.0));
+                let response =
+                    ui.add_enabled(can_apply, apply)
+                        .on_disabled_hover_text(if self.applying {
+                            "Still applying the previous changes."
+                        } else {
+                            "Connect the mouse first."
+                        });
                 if response.clicked() {
                     self.request_apply();
                 }
@@ -349,15 +380,25 @@ impl App {
     }
 
     fn sensitivity(&mut self, ui: &mut egui::Ui) {
-        heading(ui, "Sensitivity", "Up to five CPI levels. The button behind the wheel cycles through them.");
+        heading(
+            ui,
+            "Sensitivity",
+            "Up to five CPI levels. The button behind the wheel cycles through them.",
+        );
         let mut remove = None;
         let count = self.draft.dpi.len();
         for (index, dpi) in self.draft.dpi.iter_mut().enumerate() {
             ui.horizontal(|ui| {
-                ui.radio_value(&mut self.draft.dpi_selected, index, format!("Level {}", index + 1))
-                    .on_hover_text("Make this the active level.");
+                ui.radio_value(
+                    &mut self.draft.dpi_selected,
+                    index,
+                    format!("Level {}", index + 1),
+                )
+                .on_hover_text("Make this the active level.");
                 let mut value = *dpi;
                 ui.spacing_mut().slider_width = 340.0;
+                // Same width for every value box so the rows line up.
+                ui.spacing_mut().interact_size.x = 96.0;
                 let slider = egui::Slider::new(&mut value, 100..=18_000)
                     .logarithmic(true)
                     .suffix(" CPI")
@@ -392,10 +433,16 @@ impl App {
         }
 
         ui.add_space(22.0);
-        heading(ui, "Polling rate", "How often the mouse reports its position. Higher is smoother and uses more battery.");
+        heading(
+            ui,
+            "Polling rate",
+            "How often the mouse reports its position. Higher is smoother and uses more battery.",
+        );
         ui.horizontal(|ui| {
             for hz in POLLING_RATES {
-                ui.selectable_value(&mut self.draft.polling, hz, format!("{hz} Hz"));
+                if choice(ui, self.draft.polling == hz, &format!("{hz} Hz")) {
+                    self.draft.polling = hz;
+                }
             }
         });
     }
@@ -416,7 +463,8 @@ impl App {
                 ui.add_space(10.0);
                 ui.label(RichText::new("Side grid").weak());
                 for row in 0..4u8 {
-                    let buttons: Vec<Button> = (1..=3).map(|col| Button::Grid(row * 3 + col)).collect();
+                    let buttons: Vec<Button> =
+                        (1..=3).map(|col| Button::Grid(row * 3 + col)).collect();
                     self.button_row(ui, &buttons);
                 }
                 ui.add_space(10.0);
@@ -440,7 +488,11 @@ impl App {
                 let action = self.draft.buttons.get(button);
                 let changed = action != factory.get(button);
                 let text = format!("{}\n{}", button_title(button), describe(action));
-                let color = if changed { ACCENT } else { ui.visuals().text_color() };
+                let color = if changed {
+                    ACCENT
+                } else {
+                    ui.visuals().text_color()
+                };
                 let widget = egui::Button::new(RichText::new(text).color(color))
                     .selected(self.selected_button == button)
                     .min_size(egui::vec2(122.0, 46.0));
@@ -466,7 +518,9 @@ impl App {
                 .width(220.0)
                 .show_ui(ui, |ui| {
                     for candidate in Kind::ALL {
-                        if ui.selectable_label(kind == candidate, candidate.label()).clicked()
+                        if ui
+                            .selectable_label(kind == candidate, candidate.label())
+                            .clicked()
                             && kind != candidate
                         {
                             self.set_action(candidate.default_action());
@@ -480,7 +534,13 @@ impl App {
             Action::Keys(codes) => self.keys_editor(ui, codes),
             Action::MouseButton(current) => {
                 ui.horizontal_wrapped(|ui| {
-                    for (number, name) in (1u8..).zip(["Left click", "Right click", "Middle click", "Back", "Forward"]) {
+                    for (number, name) in (1u8..).zip([
+                        "Left click",
+                        "Right click",
+                        "Middle click",
+                        "Back",
+                        "Forward",
+                    ]) {
                         if ui.selectable_label(current == number, name).clicked() {
                             self.set_action(Action::MouseButton(number));
                         }
@@ -490,9 +550,13 @@ impl App {
             Action::Media(current) => {
                 ui.horizontal_wrapped(|ui| {
                     for name in media_names() {
-                        let candidate: Action = format!("media:{name}").parse().expect("known media key");
+                        let candidate: Action =
+                            format!("media:{name}").parse().expect("known media key");
                         if ui
-                            .selectable_label(candidate == Action::Media(current), media_title(name))
+                            .selectable_label(
+                                candidate == Action::Media(current),
+                                media_title(name),
+                            )
                             .clicked()
                         {
                             self.set_action(candidate);
@@ -544,13 +608,25 @@ impl App {
     /// Modifier toggles plus one key, which covers ordinary shortcuts. More
     /// unusual combinations go through "Edit as text".
     fn keys_editor(&mut self, ui: &mut egui::Ui, codes: [u8; 4]) {
-        const MODIFIERS: [(&str, u8); 4] = [("Ctrl", 0xE0), ("Shift", 0xE1), ("Alt", 0xE2), ("Win", 0xE3)];
+        const MODIFIERS: [(&str, u8); 4] = [
+            ("Ctrl", 0xE0),
+            ("Shift", 0xE1),
+            ("Alt", 0xE2),
+            ("Win", 0xE3),
+        ];
         let is_modifier = |code: u8| MODIFIERS.iter().any(|(_, m)| *m == code);
         let held: Vec<u8> = codes.iter().copied().filter(|&c| is_modifier(c)).collect();
-        let others: Vec<u8> = codes.iter().copied().filter(|&c| c != 0 && !is_modifier(c)).collect();
+        let others: Vec<u8> = codes
+            .iter()
+            .copied()
+            .filter(|&c| c != 0 && !is_modifier(c))
+            .collect();
         if others.len() > 1 {
             ui.label(
-                RichText::new("This binding presses several keys at once. Use \"Edit as text\" to change it.").weak(),
+                RichText::new(
+                    "This binding presses several keys at once. Use \"Edit as text\" to change it.",
+                )
+                .weak(),
             );
             return;
         }
@@ -566,10 +642,12 @@ impl App {
         ui.horizontal(|ui| {
             ui.label("Hold");
             for (name, code) in MODIFIERS {
-                let mut on = held.contains(&code);
-                if ui.toggle_value(&mut on, name).changed() {
+                let turning_on = !held.contains(&code);
+                // A binding holds at most four keys in total.
+                let full = held.len() + usize::from(key.is_some()) >= 4;
+                if choice(ui, !turning_on, name) && !(turning_on && full) {
                     let mut held = held.clone();
-                    if on {
+                    if turning_on {
                         held.push(code);
                         held.sort_unstable();
                     } else {
@@ -600,7 +678,11 @@ impl App {
                         }
                     }
                 });
-            let label = if self.capturing_key { "Press a key…" } else { "Press to set" };
+            let label = if self.capturing_key {
+                "Press a key…"
+            } else {
+                "Press to set"
+            };
             if ui
                 .add(egui::Button::new(label).selected(self.capturing_key))
                 .on_hover_text("Click, then press the key (with any modifiers) on your keyboard.")
@@ -621,12 +703,22 @@ impl App {
         }
         let pressed = ctx.input(|input| {
             input.events.iter().find_map(|event| match event {
-                egui::Event::Key { key, pressed: true, modifiers, repeat: false, .. } => Some((*key, *modifiers)),
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    repeat: false,
+                    ..
+                } => Some((*key, *modifiers)),
                 _ => None,
             })
         });
-        let Some((key, modifiers)) = pressed else { return };
-        let Some(name) = egui_key_name(key) else { return };
+        let Some((key, modifiers)) = pressed else {
+            return;
+        };
+        let Some(name) = egui_key_name(key) else {
+            return;
+        };
         let mut text = String::from("key:");
         for (down, modifier) in [
             (modifiers.ctrl, "ctrl"),
@@ -647,27 +739,40 @@ impl App {
     }
 
     fn lighting(&mut self, ui: &mut egui::Ui) {
-        heading(ui, "Lighting", "What the three light zones show while this computer is driving them.");
+        heading(
+            ui,
+            "Lighting",
+            "What the three light zones show while this computer is driving them.",
+        );
         let mut changed = false;
         ui.horizontal(|ui| {
-            changed |= ui.selectable_value(&mut self.draft.effect, Effect::Static, "Static colors").changed();
-            changed |= ui.selectable_value(&mut self.draft.effect, Effect::Rainbow, "Rainbow").changed();
+            for (effect, name) in [
+                (Effect::Static, "Static colors"),
+                (Effect::Rainbow, "Rainbow"),
+            ] {
+                if choice(ui, self.draft.effect == effect, name) && self.draft.effect != effect {
+                    self.draft.effect = effect;
+                    changed = true;
+                }
+            }
         });
         ui.add_space(8.0);
         match self.draft.effect {
             Effect::Static => {
-                egui::Grid::new("zones").num_columns(2).spacing([16.0, 10.0]).show(ui, |ui| {
-                    for (index, name) in ["Front", "Palm", "Wrist"].into_iter().enumerate() {
-                        ui.label(name);
-                        changed |= ui.color_edit_button_srgb(&mut self.draft.zones[index]).changed();
-                        ui.end_row();
-                    }
-                });
+                egui::Grid::new("zones")
+                    .num_columns(2)
+                    .spacing([16.0, 10.0])
+                    .show(ui, |ui| {
+                        for (index, name) in ["Front", "Palm", "Wrist"].into_iter().enumerate() {
+                            ui.label(name);
+                            changed |= ui
+                                .color_edit_button_srgb(&mut self.draft.zones[index])
+                                .changed();
+                            ui.end_row();
+                        }
+                    });
                 ui.add_space(6.0);
-                if ui
-                    .button("Use the front color everywhere")
-                    .clicked()
-                {
+                if ui.button("Use the front color everywhere").clicked() {
                     self.draft.zones = [self.draft.zones[0]; 3];
                     changed = true;
                 }
@@ -706,30 +811,50 @@ impl App {
             .width(260.0)
             .show_ui(ui, |ui| {
                 for index in 0..DEFAULT_LIGHTING_MODES.len() {
-                    ui.selectable_value(&mut self.draft.default_lighting, index, default_lighting_title(index));
+                    ui.selectable_value(
+                        &mut self.draft.default_lighting,
+                        index,
+                        default_lighting_title(index),
+                    );
                 }
             });
 
         ui.add_space(22.0);
-        ui.checkbox(&mut self.live_preview, "Show lighting changes on the mouse as I make them");
+        ui.checkbox(
+            &mut self.live_preview,
+            "Show lighting changes on the mouse as I make them",
+        );
         if changed {
             self.preview_lighting();
         }
     }
 
     fn power(&mut self, ui: &mut egui::Ui) {
-        heading(ui, "Sleep", "How long the mouse waits, untouched, before it goes to sleep to save battery.");
+        heading(
+            ui,
+            "Sleep",
+            "How long the mouse waits, untouched, before it goes to sleep to save battery.",
+        );
         ui.spacing_mut().slider_width = 340.0;
         ui.add(
-            egui::Slider::new(&mut self.draft.sleep_minutes, 0..=20)
-                .custom_formatter(|v, _| if v == 0.0 { "Never".to_string() } else { format!("{v} min") }),
+            egui::Slider::new(&mut self.draft.sleep_minutes, 0..=20).custom_formatter(|v, _| {
+                if v == 0.0 {
+                    "Never".to_string()
+                } else {
+                    format!("{v} min")
+                }
+            }),
         );
         if self.draft.sleep_minutes == 0 {
             note(ui, "With sleep off, the mouse stays awake until you switch it off, which drains the battery.");
         }
 
         ui.add_space(22.0);
-        heading(ui, "Dim the lights", "How long the mouse waits, untouched, before it dims its lights.");
+        heading(
+            ui,
+            "Dim the lights",
+            "How long the mouse waits, untouched, before it dims its lights.",
+        );
         ui.add(
             egui::Slider::new(&mut self.draft.dim_seconds, 0..=1200)
                 .logarithmic(true)
@@ -750,12 +875,17 @@ impl App {
         );
         match self.autostart.clone() {
             Ok(mut enabled) => {
-                if ui.checkbox(&mut enabled, "Start the helper when I log in").changed() {
+                if ui
+                    .checkbox(&mut enabled, "Start the helper when I log in")
+                    .changed()
+                {
                     self.autostart = self.host.set_autostart(enabled).map(|()| enabled);
                 }
             }
             Err(e) => {
-                ui.label(RichText::new(format!("Could not check the login setting: {e}")).color(DANGER));
+                ui.label(
+                    RichText::new(format!("Could not check the login setting: {e}")).color(DANGER),
+                );
                 if ui.button("Try again").clicked() {
                     self.autostart = self.host.autostart_enabled();
                 }
@@ -771,7 +901,11 @@ impl App {
         );
 
         ui.add_space(22.0);
-        heading(ui, "Profile file", "Your settings are kept in a plain text file that you can copy to another computer.");
+        heading(
+            ui,
+            "Profile file",
+            "Your settings are kept in a plain text file that you can copy to another computer.",
+        );
         if let Some(path) = self.profile_path.clone() {
             ui.horizontal(|ui| {
                 ui.label(RichText::new(path.display().to_string()).monospace());
@@ -825,8 +959,15 @@ impl App {
 
         ui.add_space(22.0);
         heading(ui, "About", "");
-        ui.label(concat!("ggez ", env!("CARGO_PKG_VERSION"), " · open source under the MIT license"));
-        ui.hyperlink_to("github.com/Thrasherop/ggez", "https://github.com/Thrasherop/ggez");
+        ui.label(concat!(
+            "ggez ",
+            env!("CARGO_PKG_VERSION"),
+            " · open source under the MIT license"
+        ));
+        ui.hyperlink_to(
+            "github.com/Thrasherop/ggez",
+            "https://github.com/Thrasherop/ggez",
+        );
         ui.label(RichText::new("Not made by or affiliated with SteelSeries.").weak());
     }
 
@@ -931,6 +1072,17 @@ impl Kind {
     }
 }
 
+/// One option in a row of mutually visible choices. Returns whether it was
+/// clicked.
+fn choice(ui: &mut egui::Ui, selected: bool, text: &str) -> bool {
+    ui.add(
+        egui::Button::new(text)
+            .selected(selected)
+            .min_size(egui::vec2(64.0, 28.0)),
+    )
+    .clicked()
+}
+
 fn heading(ui: &mut egui::Ui, title: &str, subtitle: &str) {
     ui.label(RichText::new(title).size(20.0).strong());
     if !subtitle.is_empty() {
@@ -961,7 +1113,10 @@ fn button_title(button: Button) -> String {
 }
 
 fn is_modifier_name(name: &str) -> bool {
-    matches!(name, "ctrl" | "shift" | "alt" | "win" | "rctrl" | "rshift" | "ralt" | "rwin")
+    matches!(
+        name,
+        "ctrl" | "shift" | "alt" | "win" | "rctrl" | "rshift" | "ralt" | "rwin"
+    )
 }
 
 /// A key name as shown to the user: `page-up` becomes `Page Up`.
@@ -983,7 +1138,9 @@ fn key_title(name: &str) -> String {
             .split('-')
             .map(|word| {
                 let mut chars = word.chars();
-                chars.next().map_or(String::new(), |first| first.to_ascii_uppercase().to_string() + chars.as_str())
+                chars.next().map_or(String::new(), |first| {
+                    first.to_ascii_uppercase().to_string() + chars.as_str()
+                })
             })
             .collect::<Vec<_>>()
             .join(" "),
@@ -1004,7 +1161,12 @@ fn media_title(name: &str) -> &'static str {
 }
 
 fn default_lighting_title(index: usize) -> &'static str {
-    ["Lights off", "Dark, flash on click", "Rainbow", "Rainbow, flash on click"][index]
+    [
+        "Lights off",
+        "Dark, flash on click",
+        "Rainbow",
+        "Rainbow, flash on click",
+    ][index]
 }
 
 /// A short human description of an action: `Ctrl + V`, `Left click`.
@@ -1021,7 +1183,11 @@ pub fn describe(action: Action) -> String {
         Action::ScrollDown => "Scroll down".into(),
         Action::Keys(_) => {
             let text = action.to_string();
-            let names: Vec<String> = text["key:".len()..].split('+').filter(|n| !n.is_empty()).map(key_title).collect();
+            let names: Vec<String> = text["key:".len()..]
+                .split('+')
+                .filter(|n| !n.is_empty())
+                .map(key_title)
+                .collect();
             if names.is_empty() {
                 "No key".into()
             } else {
@@ -1067,3 +1233,7 @@ fn egui_key_name(key: egui::Key) -> Option<String> {
         .to_string(),
     )
 }
+
+#[cfg(test)]
+#[path = "app_tests.rs"]
+mod tests;

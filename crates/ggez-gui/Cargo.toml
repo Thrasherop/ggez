@@ -11,7 +11,7 @@ description = "Graphical app for configuring SteelSeries Aerox 9 Wireless mice"
 ggez-core = { path = "../ggez-core" }
 ggez-service = { path = "../ggez-service" }
 anyhow = "1"
-eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+eframe = { version = "0.31", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
 rfd = { version = "0.15", default-features = false, features = ["xdg-portal", "tokio"] }
 
 [dev-dependencies]

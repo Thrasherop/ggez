@@ -237,7 +237,7 @@ impl Profile {
 
     /// Whether the profile has anything [`Profile::apply_volatile`] would send.
     pub fn has_volatile(&self) -> bool {
-self.reactive.is_some() || self.effect.is_some() || !self.colors.is_empty()
+        self.reactive.is_some() || self.effect.is_some() || !self.colors.is_empty()
     }
 
     fn send_lighting<T: Transport>(checked: &Checked, mouse: &mut Aerox9<T>) -> Result<bool> {
@@ -319,7 +319,10 @@ all = \"red\"
 ";
         let packets = commands(|p, m| p.apply_volatile(m), text);
         assert_eq!(packets, [vec![0x00, 0x62, 0xFF]]);
-        assert!(Profile::parse("effect = \"disco\"").unwrap().validate().is_err());
+        assert!(Profile::parse("effect = \"disco\"")
+            .unwrap()
+            .validate()
+            .is_err());
     }
 
     #[test]

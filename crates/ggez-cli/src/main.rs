@@ -95,7 +95,7 @@ enum Command {
     ///
     /// The mouse cannot report its bindings, so this sets ALL of them: any
     /// button not listed goes back to its factory binding. With no arguments,
-    /// every button is reset. 2.4 GHz dongle only for now. Close SteelSeries GG
+    /// every button is reset. Close SteelSeries GG
     /// first: while it runs it performs its own bindings on top of these.
     Buttons {
         /// `button=action` pairs.

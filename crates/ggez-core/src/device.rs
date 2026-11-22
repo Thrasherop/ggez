@@ -64,14 +64,11 @@ impl<T: Transport> Aerox9<T> {
         Ok(())
     }
 
-    /// Send a settings command. Over the dongle, each one is answered with
-    /// `[command, status]` where status 0 means accepted; wait for it so a
-    /// rejected or lost command is reported instead of silently ignored.
-    /// The cable sends no acknowledgement.
+    /// Send a settings command. Each one is answered with `[command, status]`
+    /// where status 0 means accepted, over the cable as well as the dongle;
+    /// wait for it so a rejected or lost command is reported instead of
+    /// silently ignored.
     fn send(&mut self, payload: Vec<u8>) -> Result<()> {
-        if self.link == Link::Wired {
-            return self.write(payload);
-        }
         let command = payload[0];
         match self.request(payload)?.get(1) {
             Some(0) => Ok(()),
@@ -218,7 +215,7 @@ impl<T: Transport> Aerox9<T> {
 
     /// Replace every button binding with `map`.
     pub fn set_buttons(&mut self, map: &crate::buttons::ButtonMap) -> Result<()> {
-        for packet in map.packets(self.link)? {
+        for packet in map.packets(self.link) {
             self.send(packet)?;
         }
         Ok(())
@@ -238,7 +235,7 @@ mod tests {
 
     #[test]
     fn packets_get_report_id_prefix() {
-        let mut m = Aerox9::new(MockTransport::new(), Link::Wired);
+        let mut m = Aerox9::new(MockTransport::accepting(), Link::Wired);
         m.set_polling_rate(PollingRate::Hz500).unwrap();
         m.save().unwrap();
         assert_eq!(
