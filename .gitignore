@@ -1,1 +1,3 @@
 /target
+# USB captures record every device on the hub, including keyboard input.
+/captures

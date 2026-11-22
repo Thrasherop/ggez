@@ -74,6 +74,16 @@ enum Command {
     Dim { seconds: u32 },
     /// Save current settings to the mouse's onboard memory.
     Save,
+    /// Protocol research: send raw hex bytes and print the replies.
+    /// The mouse acts on whatever it receives, so only send known commands.
+    Raw {
+        /// Payload bytes in hex, e.g. `d2` or `6b 00`.
+        #[arg(required = true)]
+        bytes: Vec<String>,
+        /// How many replies to wait for.
+        #[arg(long, default_value_t = 4)]
+        replies: usize,
+    },
 }
 
 fn main() -> Result<()> {
@@ -89,14 +99,13 @@ fn main() -> Result<()> {
                 LinkArg::Wired => Link::Wired,
                 LinkArg::Wireless => Link::Wireless,
             };
-            let mut mouse = Aerox9::new(MockTransport::new(), link);
+            let mut mouse = Aerox9::new(MockTransport::accepting(), link);
             if let Command::Battery = cli.command {
                 bail!("battery cannot be dry-run: it needs a reply from the mouse");
             }
             run(&mut mouse, &cli)?;
             for packet in &mouse.transport().written {
-                let hex: Vec<String> = packet.iter().map(|b| format!("{b:02x}")).collect();
-                println!("{}", hex.join(" "));
+                println!("{}", hex(packet));
             }
         }
         None => {
@@ -106,6 +115,11 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn hex(bytes: &[u8]) -> String {
+    let parts: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    parts.join(" ")
 }
 
 fn list() -> Result<()> {
@@ -139,6 +153,18 @@ fn run<T: Transport>(mouse: &mut Aerox9<T>, cli: &Cli) -> Result<()> {
             return Ok(());
         }
         Command::Save => return Ok(mouse.save()?),
+        Command::Raw { bytes, replies } => {
+            let payload = bytes
+                .iter()
+                .map(|b| u8::from_str_radix(b, 16).with_context(|| format!("bad hex byte {b:?}")))
+                .collect::<Result<Vec<u8>>>()?;
+            for reply in mouse.raw(payload, *replies)? {
+                // Trailing zero padding carries no information.
+                let len = reply.iter().rposition(|&b| b != 0).map_or(1, |i| i + 1);
+                println!("{}", hex(&reply[..len]));
+            }
+            return Ok(());
+        }
         Command::Dpi { presets, select } => {
             if *select == 0 {
                 bail!("--select counts from 1");

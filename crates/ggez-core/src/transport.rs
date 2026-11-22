@@ -24,21 +24,40 @@ pub trait Transport {
 pub struct MockTransport {
     pub written: Vec<Vec<u8>>,
     pub responses: VecDeque<Vec<u8>>,
+    /// Acknowledge every write as accepted, the way the dongle does.
+    pub auto_ack: bool,
 }
 
 impl MockTransport {
     pub fn new() -> Self {
         Self::default()
     }
+
+    pub fn accepting() -> Self {
+        Self {
+            auto_ack: true,
+            ..Self::default()
+        }
+    }
 }
 
 impl Transport for MockTransport {
     fn write(&mut self, packet: &[u8]) -> Result<(), TransportError> {
         self.written.push(packet.to_vec());
+        if self.auto_ack {
+            if let Some(&command) = packet.get(1) {
+                self.responses.push_back(vec![command, 0x00]);
+            }
+        }
         Ok(())
     }
 
-    fn read(&mut self, buf: &mut [u8], _timeout_ms: i32) -> Result<usize, TransportError> {
+    fn read(&mut self, buf: &mut [u8], timeout_ms: i32) -> Result<usize, TransportError> {
+        // Queued responses model replies that arrive after a write, so a
+        // non-blocking read (used to drain stale input) sees nothing.
+        if timeout_ms == 0 {
+            return Ok(0);
+        }
         match self.responses.pop_front() {
             Some(r) => {
                 let n = r.len().min(buf.len());

@@ -23,6 +23,10 @@ pub enum Error {
     Proto(#[from] ProtoError),
     #[error(transparent)]
     Transport(#[from] TransportError),
+    #[error("the mouse did not acknowledge command {0:#04x} (is it switched on and in range?)")]
+    NoAck(u8),
+    #[error("the mouse rejected command {command:#04x} with status {status:#04x}")]
+    Rejected { command: u8, status: u8 },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

@@ -2,10 +2,11 @@
 
 use crate::protocol::{self, Battery, DefaultLighting, Link, PollingRate, Rgb, Zone};
 use crate::transport::Transport;
-use crate::Result;
+use crate::{Error, Result};
 
 const READ_TIMEOUT_MS: i32 = 200;
-const MAX_FOREIGN_REPLIES: usize = 16;
+/// GG can queue a large backlog of its own replies ahead of ours.
+const MAX_FOREIGN_REPLIES: usize = 256;
 
 pub struct Aerox9<T: Transport> {
     transport: T,
@@ -34,6 +35,19 @@ impl<T: Transport> Aerox9<T> {
         &self.transport
     }
 
+    /// Discard input reports that queued up before our command. The OS keeps
+    /// only a small queue per device, so if stale replies (GG's, typically)
+    /// fill it, the reply we are about to wait for gets dropped.
+    fn drain(&mut self) -> Result<()> {
+        let mut buf = [0u8; 64];
+        for _ in 0..MAX_FOREIGN_REPLIES {
+            if self.transport.read(&mut buf, 0)? == 0 {
+                break;
+            }
+        }
+        Ok(())
+    }
+
     fn write(&mut self, payload: Vec<u8>) -> Result<()> {
         let mut packet = Vec::with_capacity(payload.len() + 1);
         packet.push(0x00); // HID report ID
@@ -42,34 +56,69 @@ impl<T: Transport> Aerox9<T> {
         Ok(())
     }
 
-    /// Send a settings command. The dongle answers each one with a 64-byte
-    /// report that has to be consumed, or it is mistaken for the reply to the
-    /// next query.
+    /// Send a settings command. Over the dongle, each one is answered with
+    /// `[command, status]` where status 0 means accepted; wait for it so a
+    /// rejected or lost command is reported instead of silently ignored.
+    /// The cable sends no acknowledgement.
     fn send(&mut self, payload: Vec<u8>) -> Result<()> {
-        self.write(payload)?;
-        if self.link == Link::Wireless {
-            let mut ack = [0u8; 64];
-            self.transport.read(&mut ack, READ_TIMEOUT_MS)?;
+        let command = payload[0];
+        if self.link == Link::Wired {
+            return self.write(payload);
         }
-        Ok(())
+        self.drain()?;
+        self.write(payload)?;
+        let mut buf = [0u8; 64];
+        for _ in 0..MAX_FOREIGN_REPLIES {
+            let n = self.transport.read(&mut buf, READ_TIMEOUT_MS)?;
+            if n == 0 {
+                break;
+            }
+            if buf[0] == command {
+                return match buf[1] {
+                    0 => Ok(()),
+                    status => Err(Error::Rejected { command, status }),
+                };
+            }
+        }
+        Err(Error::NoAck(command))
+    }
+
+    /// Send `payload` exactly as given (no wireless flag is added) and collect
+    /// up to `max_replies` input reports. For protocol research only: the
+    /// mouse will act on whatever it is sent.
+    pub fn raw(&mut self, payload: Vec<u8>, max_replies: usize) -> Result<Vec<Vec<u8>>> {
+        self.write(payload)?;
+        let mut replies = Vec::new();
+        for _ in 0..max_replies {
+            let mut buf = [0u8; 64];
+            let n = self.transport.read(&mut buf, READ_TIMEOUT_MS)?;
+            if n == 0 {
+                break;
+            }
+            replies.push(buf[..n].to_vec());
+        }
+        Ok(replies)
     }
 
     pub fn battery(&mut self) -> Result<Battery> {
         let query = protocol::battery_query(self.link);
         let command = query[0];
+        self.drain()?;
         self.write(query)?;
         // Other software (SteelSeries GG, if running) shares this interface,
         // so replies to its commands can arrive first. Replies echo the
         // command byte; skip the ones that are not ours.
         let mut buf = [0u8; 64];
-        let mut n = 0;
         for _ in 0..MAX_FOREIGN_REPLIES {
-            n = self.transport.read(&mut buf, READ_TIMEOUT_MS)?;
-            if n == 0 || buf[0] == command {
+            let n = self.transport.read(&mut buf, READ_TIMEOUT_MS)?;
+            if n == 0 {
                 break;
             }
+            if buf[0] == command {
+                return Ok(protocol::parse_battery(&buf[..n])?);
+            }
         }
-        Ok(protocol::parse_battery(&buf[..n])?)
+        Err(protocol::ProtoError::BadBatteryResponse(Vec::new()).into())
     }
 
     pub fn set_dpi(&mut self, presets: &[u32], selected: usize) -> Result<()> {
@@ -130,13 +179,28 @@ mod tests {
     #[test]
     fn wireless_ack_is_not_mistaken_for_battery_reply() {
         let mut t = MockTransport::new();
-        t.responses.push_back(vec![0x6B; 64]); // ack for polling rate
+        t.responses.push_back(vec![0x61, 0x00]); // reply to someone else
+        t.responses.push_back(vec![0x6B, 0x00]); // ack for polling rate
         t.responses.push_back(vec![0xD2, 0x8B]); // battery: 50%, charging
         let mut m = Aerox9::new(t, Link::Wireless);
         m.set_polling_rate(PollingRate::Hz1000).unwrap();
         let b = m.battery().unwrap();
         assert_eq!((b.percent, b.charging), (50, true));
         assert_eq!(m.transport().written[1], vec![0x00, 0xD2]);
+    }
+
+    #[test]
+    fn wireless_reports_missing_and_rejected_acks() {
+        let mut m = Aerox9::new(MockTransport::new(), Link::Wireless);
+        assert!(matches!(m.save(), Err(Error::NoAck(0x51))));
+
+        let mut t = MockTransport::new();
+        t.responses.push_back(vec![0x51, 0xFF]);
+        let mut m = Aerox9::new(t, Link::Wireless);
+        assert!(matches!(
+            m.save(),
+            Err(Error::Rejected { command: 0x51, status: 0xFF })
+        ));
     }
 
     #[test]
