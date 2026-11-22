@@ -3,9 +3,13 @@
   Record USB traffic to a file while you change settings in SteelSeries GG.
 
 .DESCRIPTION
-  Captures every USBPcap root hub for -Seconds seconds (or until Ctrl+C) into
-  captures\<Name>.pcapng. Run from an elevated PowerShell: USBPcap needs
-  administrator rights. Decode the result with tools\decode.ps1.
+  Captures every USB root hub with USBPcap for -Seconds seconds and writes
+  captures\<Name>-USBPcap<N>.pcap, one file per hub. USBPcap needs
+  administrator rights, so the script relaunches itself elevated (one
+  Windows prompt) when needed. Decode the result with tools\decode.ps1.
+
+  The capture includes every device on the hub, keyboards too: do not type
+  anything private while it runs.
 
 .EXAMPLE
   .\tools\capture.ps1 -Name remap-button6-to-f13 -Seconds 60
@@ -16,20 +20,31 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-$tshark = "$env:ProgramFiles\Wireshark\tshark.exe"
-if (-not (Test-Path $tshark)) { throw "tshark not found at $tshark - install Wireshark" }
+$usbpcap = "$env:ProgramFiles\USBPcap\USBPcapCMD.exe"
+if (-not (Test-Path $usbpcap)) { throw "USBPcapCMD not found at $usbpcap - install USBPcap and reboot" }
+
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+    Start-Process powershell -Verb RunAs -Wait -WindowStyle Minimized -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"",
+        '-Name', "`"$Name`"", '-Seconds', $Seconds)
+    return
+}
 
 $outDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'captures'
 New-Item -ItemType Directory -Force $outDir | Out-Null
-$out = Join-Path $outDir "$Name.pcapng"
 
-# One capture interface per USB root hub; capture them all so it does not
-# matter which port the mouse or dongle is on.
-$hubs = & $tshark -D | Where-Object { $_ -match 'USBPcap\d+' } | ForEach-Object { $Matches[0] } | Sort-Object -Unique
-if (-not $hubs) { throw "No USBPcap interfaces found - install USBPcap, then reboot or replug" }
+# One control device per root hub; capture them all so it does not matter
+# which port the mouse or dongle is on.
+$hubs = & $usbpcap --extcap-interfaces | ForEach-Object { if ($_ -match 'value=(\\\\\.\\USBPcap\d+)') { $Matches[1] } }
+if (-not $hubs) { throw "USBPcap reports no root hubs - reboot after installing it" }
 
-$ifArgs = $hubs | ForEach-Object { '-i'; "\\.\$_" }
-Write-Host "Capturing $($hubs -join ', ') for $Seconds s -> $out"
-Write-Host "Make your change in GG now."
-& $tshark @ifArgs -a "duration:$Seconds" -w $out -q
-Write-Host "Saved $out"
+$procs = foreach ($hub in $hubs) {
+    $out = Join-Path $outDir ("{0}-{1}.pcap" -f $Name, ($hub -replace '.*\\', ''))
+    Remove-Item $out -ErrorAction SilentlyContinue
+    Start-Process $usbpcap -PassThru -WindowStyle Hidden -ArgumentList @(
+        '-d', $hub, '-o', "`"$out`"", '-A', '--inject-descriptors')
+}
+Start-Sleep -Seconds $Seconds
+$procs | Stop-Process -Force

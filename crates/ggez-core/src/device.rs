@@ -1,12 +1,17 @@
 //! High-level API for one connected mouse.
 
+use std::time::{Duration, Instant};
+
 use crate::protocol::{self, Battery, DefaultLighting, Link, PollingRate, Rgb, Zone};
 use crate::transport::Transport;
 use crate::{Error, Result};
 
 const READ_TIMEOUT_MS: i32 = 200;
-/// GG can queue a large backlog of its own replies ahead of ours.
-const MAX_FOREIGN_REPLIES: usize = 256;
+/// How long to wait for a reply before resending the command.
+const REPLY_WAIT: Duration = Duration::from_millis(500);
+const ATTEMPTS: usize = 4;
+/// Upper bound on stale input reports discarded before a command.
+const MAX_STALE_REPORTS: usize = 256;
 
 pub struct Aerox9<T: Transport> {
     transport: T,
@@ -40,7 +45,7 @@ impl<T: Transport> Aerox9<T> {
     /// fill it, the reply we are about to wait for gets dropped.
     fn drain(&mut self) -> Result<()> {
         let mut buf = [0u8; 64];
-        for _ in 0..MAX_FOREIGN_REPLIES {
+        for _ in 0..MAX_STALE_REPORTS {
             if self.transport.read(&mut buf, 0)? == 0 {
                 break;
             }
@@ -61,23 +66,40 @@ impl<T: Transport> Aerox9<T> {
     /// rejected or lost command is reported instead of silently ignored.
     /// The cable sends no acknowledgement.
     fn send(&mut self, payload: Vec<u8>) -> Result<()> {
-        let command = payload[0];
         if self.link == Link::Wired {
             return self.write(payload);
         }
-        self.drain()?;
-        self.write(payload)?;
+        let command = payload[0];
+        match self.request(payload)?.get(1) {
+            Some(0) => Ok(()),
+            status => Err(Error::Rejected {
+                command,
+                status: status.copied().unwrap_or(0xFF),
+            }),
+        }
+    }
+
+    /// Send a command and wait for the reply that echoes its command byte.
+    ///
+    /// Other software (SteelSeries GG, if running) shares this interface and
+    /// can crowd our reply out of the OS's small input queue, so replies that
+    /// are not ours are skipped and the command is resent if none arrives.
+    /// Every command here is idempotent, so resending is safe.
+    fn request(&mut self, payload: Vec<u8>) -> Result<Vec<u8>> {
+        let command = payload[0];
         let mut buf = [0u8; 64];
-        for _ in 0..MAX_FOREIGN_REPLIES {
-            let n = self.transport.read(&mut buf, READ_TIMEOUT_MS)?;
-            if n == 0 {
-                break;
-            }
-            if buf[0] == command {
-                return match buf[1] {
-                    0 => Ok(()),
-                    status => Err(Error::Rejected { command, status }),
-                };
+        for _ in 0..ATTEMPTS {
+            self.drain()?;
+            self.write(payload.clone())?;
+            let deadline = Instant::now() + REPLY_WAIT;
+            while Instant::now() < deadline {
+                let n = self.transport.read(&mut buf, READ_TIMEOUT_MS)?;
+                if n == 0 {
+                    break;
+                }
+                if buf[0] == command {
+                    return Ok(buf[..n].to_vec());
+                }
             }
         }
         Err(Error::NoAck(command))
@@ -101,24 +123,8 @@ impl<T: Transport> Aerox9<T> {
     }
 
     pub fn battery(&mut self) -> Result<Battery> {
-        let query = protocol::battery_query(self.link);
-        let command = query[0];
-        self.drain()?;
-        self.write(query)?;
-        // Other software (SteelSeries GG, if running) shares this interface,
-        // so replies to its commands can arrive first. Replies echo the
-        // command byte; skip the ones that are not ours.
-        let mut buf = [0u8; 64];
-        for _ in 0..MAX_FOREIGN_REPLIES {
-            let n = self.transport.read(&mut buf, READ_TIMEOUT_MS)?;
-            if n == 0 {
-                break;
-            }
-            if buf[0] == command {
-                return Ok(protocol::parse_battery(&buf[..n])?);
-            }
-        }
-        Err(protocol::ProtoError::BadBatteryResponse(Vec::new()).into())
+        let reply = self.request(protocol::battery_query(self.link))?;
+        Ok(protocol::parse_battery(&reply)?)
     }
 
     pub fn set_dpi(&mut self, presets: &[u32], selected: usize) -> Result<()> {
