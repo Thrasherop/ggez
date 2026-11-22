@@ -784,6 +784,50 @@ impl App {
     fn power(&mut self, ui: &mut Ui) {
         theme::page_title(ui, "Power", "Trade a little convenience for battery life.");
         theme::card(ui, |ui| {
+            theme::card_title(ui, "Battery", "");
+            match &self.status {
+                Status::Connected {
+                    battery: Some((percent, charging)),
+                    ..
+                } => {
+                    let (percent, charging) = (*percent, *charging);
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            RichText::new(format!("{percent}%"))
+                                .font(FontId::new(34.0, theme::strong())),
+                        );
+                        ui.vertical(|ui| {
+                            ui.add_space(12.0);
+                            hint(
+                                ui,
+                                if charging {
+                                    "Charging over USB."
+                                } else {
+                                    "Reported by the mouse in steps of 5%."
+                                },
+                            );
+                        });
+                    });
+                    let color = if percent <= 15 && !charging {
+                        DANGER
+                    } else {
+                        ACCENT
+                    };
+                    let (rect, _) =
+                        ui.allocate_exact_size(vec2(ui.available_width(), 8.0), Sense::hover());
+                    ui.painter()
+                        .rect_filled(rect, CornerRadius::same(4), RAISED);
+                    let mut filled = rect;
+                    filled.set_width(rect.width() * f32::from(percent.min(100)) / 100.0);
+                    ui.painter()
+                        .rect_filled(filled, CornerRadius::same(4), color);
+                }
+                Status::Connected { .. } => hint(ui, "The mouse did not report its battery level."),
+                _ => hint(ui, "Connect the mouse to see its battery level."),
+            }
+        });
+        ui.add_space(6.0);
+        theme::card(ui, |ui| {
             theme::card_title(
                 ui,
                 "Sleep",
