@@ -349,3 +349,73 @@ pub fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
     let mix = |x: u8, y: u8| (f32::from(x) + (f32::from(y) - f32::from(x)) * t).round() as u8;
     Color32::from_rgb(mix(a.r(), b.r()), mix(a.g(), b.g()), mix(a.b(), b.b()))
 }
+
+/// A color the user can click to change. Returns whether it changed.
+pub fn swatch(ui: &mut Ui, rgb: &mut [u8; 3], label: &str) -> bool {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(56.0, 36.0), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::ColorButton, true, label));
+    let color = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+    let radius = CornerRadius::same(CONTROL_RADIUS);
+    ui.painter().rect_filled(rect, radius, color);
+    let edge = if response.hovered() { TEXT } else { LINE };
+    ui.painter()
+        .rect_stroke(rect, radius, Stroke::new(1.5, edge), StrokeKind::Inside);
+
+    let popup = response.id.with("picker");
+    if response.clicked() {
+        ui.memory_mut(|memory| memory.toggle_popup(popup));
+    }
+    let mut changed = false;
+    egui::popup_below_widget(
+        ui,
+        popup,
+        &response,
+        egui::PopupCloseBehavior::CloseOnClickOutside,
+        |ui| {
+            ui.set_min_width(250.0);
+            ui.spacing_mut().slider_width = 230.0;
+            let mut picked = color;
+            if egui::color_picker::color_picker_color32(
+                ui,
+                &mut picked,
+                egui::color_picker::Alpha::Opaque,
+            ) {
+                *rgb = [picked.r(), picked.g(), picked.b()];
+                changed = true;
+            }
+        },
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    changed
+}
+
+/// A button that opens a list, with the current choice as its text.
+pub fn dropdown_button(ui: &mut Ui, text: &str, width: f32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 32.0), Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, true, text));
+    let fill = if response.hovered() {
+        RAISED_HOVER
+    } else {
+        RAISED
+    };
+    ui.painter()
+        .rect_filled(rect, CornerRadius::same(CONTROL_RADIUS), fill);
+    ui.painter().text(
+        egui::pos2(rect.left() + 12.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        text,
+        FontId::proportional(14.5),
+        TEXT,
+    );
+    let tip = egui::pos2(rect.right() - 16.0, rect.center().y + 3.0);
+    ui.painter().add(egui::Shape::convex_polygon(
+        vec![
+            tip,
+            tip + egui::vec2(-5.0, -6.0),
+            tip + egui::vec2(5.0, -6.0),
+        ],
+        TEXT_DIM,
+        Stroke::NONE,
+    ));
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}

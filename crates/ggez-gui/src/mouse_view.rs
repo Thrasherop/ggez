@@ -169,6 +169,7 @@ pub fn buttons(
     let origin = rect.min;
     let at = |x: f32, y: f32| origin + vec2(x, y);
     let mut clicked = None;
+    let mut pointed_at = None;
 
     // One control: a hit area that reports whether it is selected and
     // whether the pointer is over it.
@@ -186,6 +187,9 @@ pub fn buttons(
         });
         if response.clicked() {
             clicked = Some(button);
+        }
+        if response.hovered() {
+            pointed_at = Some(button);
         }
         (button == selected, response.hovered())
     };
@@ -383,6 +387,24 @@ pub fn buttons(
     ui.painter()
         .line_segment([grid_right, flank], Stroke::new(1.0, LINE));
     ui.painter().circle_filled(flank, 3.5, SHELL_EDGE);
+
+    // Name whatever the pointer is over, or else the selected button, with
+    // its binding: the small controls have no room for their own text.
+    let shown = pointed_at.unwrap_or(selected);
+    ui.painter().text(
+        at(0.0, 340.0),
+        Align2::LEFT_CENTER,
+        title(shown),
+        FontId::proportional(12.5),
+        TEXT_FAINT,
+    );
+    ui.painter().text(
+        at(0.0, 360.0),
+        Align2::LEFT_CENTER,
+        describe(map.get(shown)),
+        FontId::new(14.5, theme::strong()),
+        if changed(shown) { ACCENT } else { TEXT },
+    );
 
     clicked
 }

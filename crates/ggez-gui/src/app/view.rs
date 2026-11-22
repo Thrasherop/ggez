@@ -548,24 +548,79 @@ impl App {
         ui.label(RichText::new("Key").color(TEXT_DIM).size(12.5));
         ui.horizontal(|ui| {
             let current = key.map(|code| Action::key(code).to_string()["key:".len()..].to_string());
-            egui::ComboBox::from_id_salt("key-name")
-                .selected_text(current.as_deref().map_or("(none)".to_string(), key_title))
-                .width(104.0)
-                .height(320.0)
-                .show_ui(ui, |ui| {
-                    if ui.selectable_label(key.is_none(), "(none)").clicked() && !held.is_empty() {
-                        self.set_action(rebuild(&held, None));
+            let shown = current.as_deref().map_or("(none)".to_string(), key_title);
+            let opener = theme::dropdown_button(ui, &shown, 116.0);
+            let popup = ui.id().with("key-picker");
+            if opener.clicked() {
+                self.key_filter.clear();
+                ui.memory_mut(|memory| memory.toggle_popup(popup));
+            }
+            // `Some(None)` means "(none)" was chosen.
+            let mut picked: Option<Option<String>> = None;
+            egui::popup_below_widget(
+                ui,
+                popup,
+                &opener,
+                egui::PopupCloseBehavior::CloseOnClickOutside,
+                |ui| {
+                    ui.set_min_width(190.0);
+                    let search = ui.add(
+                        egui::TextEdit::singleline(&mut self.key_filter)
+                            .hint_text("Search keys")
+                            .desired_width(f32::INFINITY),
+                    );
+                    if opener.clicked() {
+                        search.request_focus();
                     }
-                    for name in key_names().into_iter().filter(|n| !is_modifier_name(n)) {
-                        let selected = current.as_deref() == Some(name.as_str());
-                        if ui.selectable_label(selected, key_title(&name)).clicked() {
-                            let parsed: Action = format!("key:{name}").parse().expect("known key");
-                            if let Action::Keys([code, ..]) = parsed {
-                                self.set_action(rebuild(&held, Some(code)));
-                            }
+                    let filter = self.key_filter.trim().to_lowercase();
+                    let matches: Vec<String> = key_names()
+                        .into_iter()
+                        .filter(|name| !is_modifier_name(name))
+                        .filter(|name| {
+                            name.contains(&filter)
+                                || key_title(name).to_lowercase().contains(&filter)
+                        })
+                        .collect();
+                    // Enter takes the first match, so a key can be chosen
+                    // without leaving the keyboard.
+                    if search.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
+                    {
+                        if let Some(first) = matches.first() {
+                            picked = Some(Some(first.clone()));
                         }
                     }
+                    egui::ScrollArea::vertical()
+                        .max_height(270.0)
+                        .show(ui, |ui| {
+                            ui.set_min_width(170.0);
+                            if filter.is_empty()
+                                && ui.selectable_label(key.is_none(), "(none)").clicked()
+                            {
+                                picked = Some(None);
+                            }
+                            for name in &matches {
+                                let selected = current.as_deref() == Some(name.as_str());
+                                if ui.selectable_label(selected, key_title(name)).clicked() {
+                                    picked = Some(Some(name.clone()));
+                                }
+                            }
+                            if matches.is_empty() {
+                                hint(ui, "No key by that name.");
+                            }
+                        });
+                },
+            );
+            if let Some(choice) = picked {
+                let code = choice.and_then(|name| match format!("key:{name}").parse() {
+                    Ok(Action::Keys([code, ..])) => Some(code),
+                    _ => None,
                 });
+                // A binding needs at least one key or modifier.
+                if code.is_some() || !held.is_empty() {
+                    self.set_action(rebuild(&held, code));
+                }
+                ui.memory_mut(|memory| memory.close_popup());
+            }
             let label = if self.capturing_key {
                 "Press a key…"
             } else {
@@ -682,11 +737,11 @@ impl App {
                                 ui.allocate_ui(vec2(ui.available_width(), ROW), |ui| {
                                     ui.horizontal_centered(|ui| {
                                         ui.spacing_mut().item_spacing.x = 14.0;
-                                        ui.spacing_mut().interact_size = vec2(58.0, 36.0);
-                                        changed |= ui
-                                            .color_edit_button_srgb(&mut self.draft.zones[index])
-                                            .on_hover_text("Choose a color")
-                                            .changed();
+                                        changed |= theme::swatch(
+                                            ui,
+                                            &mut self.draft.zones[index],
+                                            &format!("{name} color"),
+                                        );
                                         ui.vertical(|ui| {
                                             ui.add_space(4.0);
                                             ui.label(
@@ -752,7 +807,7 @@ impl App {
                         changed = true;
                     }
                     if let Some(color) = &mut self.draft.reactive {
-                        changed |= ui.color_edit_button_srgb(color).changed();
+                        changed |= theme::swatch(ui, color, "Flash color");
                     }
                 });
             });

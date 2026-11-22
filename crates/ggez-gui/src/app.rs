@@ -74,6 +74,8 @@ pub struct App {
     action_text: String,
     /// The next key press becomes the selected button's key.
     capturing_key: bool,
+    /// What has been typed into the key list's search box.
+    key_filter: String,
     confirm_no_left_click: bool,
     confirm_reset: bool,
     live_preview: bool,
@@ -121,6 +123,7 @@ impl App {
             apply_failed: false,
             selected_button,
             capturing_key: false,
+            key_filter: String::new(),
             confirm_no_left_click: false,
             confirm_reset: false,
             live_preview: true,
