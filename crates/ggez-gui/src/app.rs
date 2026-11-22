@@ -10,6 +10,8 @@ use ggez_service::Profile;
 use crate::device::{Device, Reply, Request, Status};
 use crate::draft::{snap_dpi, Draft, Effect, MAX_DPI_PRESETS, POLLING_RATES};
 
+const FIRST_RUN: &str = "These are the mouse's factory settings, not what is on your mouse now: the mouse cannot report its settings. Applying replaces everything on it, button bindings included.";
+
 const ACCENT: Color32 = Color32::from_rgb(45, 212, 191);
 const WARNING: Color32 = Color32::from_rgb(250, 190, 80);
 const DANGER: Color32 = Color32::from_rgb(248, 113, 113);
@@ -253,9 +255,7 @@ impl App {
         if self.first_run {
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_max_width(560.0);
-                ui.label(
-                    "These are the mouse's factory settings, not what is on your mouse now: \n                     the mouse cannot report its settings. Applying replaces everything on it, \n                     button bindings included.",
-                );
+                ui.label(FIRST_RUN);
                 if ui.button("Got it").clicked() {
                     self.first_run = false;
                 }
