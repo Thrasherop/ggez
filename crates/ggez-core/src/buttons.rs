@@ -42,11 +42,11 @@ pub enum Button {
     ScrollDown,
 }
 
-/// Table slot of each grid button, indexed by grid number - 1. The table
-/// stores the grid column by column, right column first. Buttons 1, 2 and
-/// the positions of 6-12 were observed directly; 3, 4 and 5 are inferred
-/// from that pattern.
-const GRID_SLOTS: [usize; 12] = [14, 10, 8, 16, 12, 6, 15, 11, 7, 17, 13, 9];
+/// Table slot of each grid button, indexed by grid number - 1. The grid is
+/// three buttons wide and the table stores it column by column, right
+/// column first. Buttons 1-6 were confirmed by pressing them on a real
+/// mouse; 7-12 follow the same pattern.
+const GRID_SLOTS: [usize; 12] = [14, 10, 6, 15, 11, 7, 16, 12, 8, 17, 13, 9];
 
 impl Button {
     fn slot(self) -> usize {
@@ -282,9 +282,9 @@ mod tests {
         let mut map = ButtonMap::default();
         map.set(Button::Grid(1), "media:play-pause".parse().unwrap());
         map.set(Button::Grid(2), "key:k".parse().unwrap());
-        map.set(Button::Grid(3), "key:p".parse().unwrap());
-        map.set(Button::Grid(4), "key:i".parse().unwrap());
-        map.set(Button::Grid(5), "key:o".parse().unwrap());
+        for (n, key) in [(3, "6"), (4, "7"), (5, "8"), (6, "9"), (7, "i"), (8, "o"), (9, "p")] {
+            map.set(Button::Grid(n), format!("key:{key}").parse().unwrap());
+        }
         // GG leaves the old key code behind when it disables a button; the
         // captured packets had 2e, 2d and 27 there. Compare those as zero.
         map.set(Button::Grid(10), Action::Disabled);
