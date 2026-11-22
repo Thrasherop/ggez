@@ -25,6 +25,8 @@ pub enum Error {
     Transport(#[from] TransportError),
     #[error("the mouse did not acknowledge command {0:#04x} (is it switched on and in range? Closing SteelSeries GG also helps)")]
     NoAck(u8),
+    #[error("the dongle has no link to the mouse (is it switched on, awake and in range?)")]
+    Offline,
     #[error("the mouse rejected command {command:#04x} with status {status:#04x}")]
     Rejected { command: u8, status: u8 },
 }

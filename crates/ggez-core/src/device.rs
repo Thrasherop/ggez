@@ -88,6 +88,7 @@ impl<T: Transport> Aerox9<T> {
     fn request(&mut self, payload: Vec<u8>) -> Result<Vec<u8>> {
         let command = payload[0];
         let mut buf = [0u8; 64];
+        let mut link_down = false;
         for _ in 0..ATTEMPTS {
             self.drain()?;
             self.write(payload.clone())?;
@@ -100,9 +101,18 @@ impl<T: Transport> Aerox9<T> {
                 if buf[0] == command {
                     return Ok(buf[..n].to_vec());
                 }
+                // The dongle answers `40 ff` itself when it has no radio link
+                // to the mouse (switched off, asleep or out of range).
+                if n >= 2 && buf[..2] == [0x40, 0xFF] {
+                    link_down = true;
+                }
             }
         }
-        Err(Error::NoAck(command))
+        Err(if link_down {
+            Error::Offline
+        } else {
+            Error::NoAck(command)
+        })
     }
 
     /// Send `payload` exactly as given (no wireless flag is added) and collect
@@ -207,6 +217,14 @@ mod tests {
             m.save(),
             Err(Error::Rejected { command: 0x51, status: 0xFF })
         ));
+    }
+
+    #[test]
+    fn dongle_without_mouse_reports_offline() {
+        let mut t = MockTransport::new();
+        t.responses.push_back(vec![0x40, 0xFF, 0x00]);
+        let mut m = Aerox9::new(t, Link::Wireless);
+        assert!(matches!(m.battery(), Err(Error::Offline)));
     }
 
     #[test]
