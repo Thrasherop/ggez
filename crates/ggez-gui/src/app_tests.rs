@@ -854,7 +854,12 @@ fn a_button_can_be_given_a_macro_and_applied() {
     harness.run();
     assert!(harness.state().draft.has_macro(Button::Grid(7)));
     assert!(harness.state().is_dirty());
-    harness.get_by_label_contains("works only while ggez is running");
+    // The note under the steps says where macros can run.
+    harness.get_by_label_contains(if ggez_service::macro_host::Host::supported() {
+        "works only while ggez is running"
+    } else {
+        "on Windows only so far"
+    });
 
     // What is typed is checked as it is typed.
     harness
