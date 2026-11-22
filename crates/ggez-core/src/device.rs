@@ -7,8 +7,9 @@ use crate::transport::Transport;
 use crate::{Error, Result};
 
 const READ_TIMEOUT_MS: i32 = 200;
-/// How long to wait for a reply before resending the command.
-const REPLY_WAIT: Duration = Duration::from_millis(500);
+/// How long to wait for a reply before resending the command. Saving to
+/// onboard memory takes the mouse up to half a second to acknowledge.
+const REPLY_WAIT: Duration = Duration::from_millis(1000);
 const ATTEMPTS: usize = 4;
 /// Upper bound on stale input reports discarded before a command.
 const MAX_STALE_REPORTS: usize = 256;
@@ -93,8 +94,12 @@ impl<T: Transport> Aerox9<T> {
             self.drain()?;
             self.write(payload.clone())?;
             let deadline = Instant::now() + REPLY_WAIT;
-            while Instant::now() < deadline {
-                let n = self.transport.read(&mut buf, READ_TIMEOUT_MS)?;
+            loop {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                let n = self.transport.read(&mut buf, left.as_millis().max(1) as i32)?;
                 if n == 0 {
                     break;
                 }
@@ -167,6 +172,14 @@ impl<T: Transport> Aerox9<T> {
 
     pub fn set_default_lighting(&mut self, mode: DefaultLighting) -> Result<()> {
         self.send(protocol::set_default_lighting(self.link, mode))
+    }
+
+    /// Replace every button binding with `map`.
+    pub fn set_buttons(&mut self, map: &crate::buttons::ButtonMap) -> Result<()> {
+        for packet in map.packets(self.link)? {
+            self.send(packet)?;
+        }
+        Ok(())
     }
 
     /// Persist current settings to onboard memory. Without this, settings are

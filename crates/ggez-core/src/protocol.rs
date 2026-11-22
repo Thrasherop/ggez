@@ -36,6 +36,12 @@ pub enum ProtoError {
     BadColor(String),
     #[error("unexpected battery response {0:02x?}")]
     BadBatteryResponse(Vec<u8>),
+    #[error("unknown button {0:?} (use left, right, middle, dpi, g1-g12, scroll-up, scroll-down)")]
+    BadButton(String),
+    #[error("unknown action {0:?} (use disabled, left, right, middle, back, forward, dpi, scroll-up, scroll-down, key:<name>, media:<name>)")]
+    BadAction(String),
+    #[error("button remapping is only supported through the 2.4 GHz dongle so far")]
+    ButtonsNeedDongle,
 }
 
 /// How the mouse is connected. Determines the command flag.

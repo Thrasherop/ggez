@@ -4,8 +4,10 @@ A small, native replacement for SteelSeries GG/Engine for the **Aerox 9 Wireless
 written in Rust. One binary, no background services, and the same code on
 Windows, macOS and Linux.
 
-Status: early. The CLI and protocol layer exist and are unit-tested; nothing
-has been run against a real mouse yet.
+Status: early. Every command has been accepted by a real Aerox 9 Wireless
+through its 2.4 GHz dongle (firmware 1.2.4), including with SteelSeries GG
+running. The USB cable path is untested, and nobody has yet checked by eye
+that lights and bindings change as intended.
 
 ## What works (in code)
 
@@ -28,8 +30,9 @@ supported, plus the WoW Edition IDs. Bluetooth is not.
 
 ## Not done yet
 
-- Button remapping (the 12-button side grid). Nobody has published this for
-  the Aerox 9; it needs USB captures of GG to reverse engineer.
+- Button remapping over the USB cable (the dongle works: `ggez buttons
+  g1=key:f13 g2=media:play-pause`), key combinations with modifiers, and
+  macros.
 - Reading current settings back from the mouse.
 - A GUI.
 

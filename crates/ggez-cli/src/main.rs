@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use ggez_core::transport::{list_steelseries, HidTransport};
-use ggez_core::{Aerox9, DefaultLighting, Link, MockTransport, PollingRate, Rgb, Transport, Zone};
+use ggez_core::{Aerox9, Button, ButtonMap, DefaultLighting, Link, MockTransport, PollingRate, Rgb, Transport, Zone};
 
 /// Configure a SteelSeries Aerox 9 Wireless without SteelSeries GG.
 #[derive(Parser)]
@@ -72,6 +72,19 @@ enum Command {
     Sleep { minutes: u32 },
     /// Seconds of idle before the LEDs dim (0-1200, 0 = never).
     Dim { seconds: u32 },
+    /// Rebind buttons, e.g. `ggez buttons g1=key:f13 g2=media:play-pause g3=disabled`.
+    ///
+    /// Buttons: left, right, middle, dpi, g1-g12 (side grid), scroll-up, scroll-down.
+    /// Actions: disabled, left, right, middle, back, forward, dpi, scroll-up,
+    /// scroll-down, key:<name>, media:<name>.
+    ///
+    /// The mouse cannot report its bindings, so this sets ALL of them: any
+    /// button not listed goes back to its factory binding. With no arguments,
+    /// every button is reset. 2.4 GHz dongle only for now.
+    Buttons {
+        /// `button=action` pairs.
+        bindings: Vec<String>,
+    },
     /// Save current settings to the mouse's onboard memory.
     Save,
     /// Protocol research: send raw hex bytes and print the replies.
@@ -205,6 +218,16 @@ fn run<T: Transport>(mouse: &mut Aerox9<T>, cli: &Cli) -> Result<()> {
             LightingArg::Rainbow => DefaultLighting::Rainbow,
             LightingArg::ReactiveRainbow => DefaultLighting::ReactiveRainbow,
         })?,
+        Command::Buttons { bindings } => {
+            let mut map = ButtonMap::default();
+            for binding in bindings {
+                let (button, action) = binding
+                    .split_once('=')
+                    .with_context(|| format!("expected button=action, got {binding:?}"))?;
+                map.set(button.parse::<Button>()?, action.parse()?);
+            }
+            mouse.set_buttons(&map)?;
+        }
         Command::Sleep { minutes } => mouse.set_sleep_timer(*minutes)?,
         Command::Dim { seconds } => mouse.set_dim_timer(*seconds)?,
     }

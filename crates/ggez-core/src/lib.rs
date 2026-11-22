@@ -8,11 +8,13 @@
 //! Protocol knowledge comes from the rivalcfg project
 //! (<https://github.com/flozz/rivalcfg>).
 
+pub mod buttons;
 pub mod device;
 mod dpi_table;
 pub mod protocol;
 pub mod transport;
 
+pub use buttons::{Action, Button, ButtonMap};
 pub use device::Aerox9;
 pub use protocol::{Battery, DefaultLighting, Link, PollingRate, ProtoError, Rgb, Zone};
 pub use transport::{MockTransport, Transport, TransportError};
