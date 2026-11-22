@@ -164,7 +164,7 @@ pub fn buttons(
     title: &dyn Fn(Button) -> String,
 ) -> Option<Button> {
     let factory = ButtonMap::default();
-    let size = vec2(430.0, 388.0);
+    let size = vec2(422.0, 388.0);
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let origin = rect.min;
     let at = |x: f32, y: f32| origin + vec2(x, y);
@@ -185,6 +185,7 @@ pub fn buttons(
         response.widget_info(|| {
             WidgetInfo::selected(WidgetType::Button, true, button == selected, title(button))
         });
+        theme::focus_ring(ui, &response, hit, 8);
         if response.clicked() {
             clicked = Some(button);
         }

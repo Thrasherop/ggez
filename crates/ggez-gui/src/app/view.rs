@@ -367,7 +367,7 @@ impl App {
         );
         theme::card(ui, |ui| {
             ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing.x = 22.0;
+                ui.spacing_mut().item_spacing.x = 18.0;
                 let clicked = mouse_view::buttons(
                     ui,
                     &self.draft.buttons,
@@ -1123,6 +1123,7 @@ impl App {
 fn nav_item(ui: &mut Ui, selected: bool, tab: Tab, name: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
     response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, name));
+    theme::focus_ring(ui, &response, rect, theme::CONTROL_RADIUS);
     let (fill, ink) = if selected {
         (Some(ACCENT_DEEP.gamma_multiply(0.55)), TEXT)
     } else if response.hovered() {
@@ -1249,6 +1250,7 @@ fn level_marker(ui: &mut Ui, active: bool, number: usize) -> bool {
     let label = format!("Level {number}");
     let (rect, response) = ui.allocate_exact_size(vec2(86.0, 32.0), Sense::click());
     response.widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, true, active, &label));
+    theme::focus_ring(ui, &response, rect, theme::CONTROL_RADIUS);
     let center = pos2(rect.left() + 10.0, rect.center().y);
     if active {
         ui.painter()

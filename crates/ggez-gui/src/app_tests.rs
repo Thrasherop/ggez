@@ -499,3 +499,50 @@ fn click_flash_can_be_switched_on() {
         "the change is previewed on the mouse"
     );
 }
+
+/// The custom-drawn controls must work without a pointer: reachable with
+/// Tab, operated with Enter or Space.
+#[test]
+fn custom_controls_work_from_the_keyboard() {
+    let (mut harness, _, _) = window("keyboard");
+
+    // A sidebar entry.
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Buttons")
+        .focus();
+    harness.run();
+    harness.press_key(egui::Key::Enter);
+    harness.run();
+    assert_eq!(harness.state().tab, Tab::Buttons);
+
+    // A control in the mouse drawing.
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "Side button 7")
+        .focus();
+    harness.run();
+    harness.press_key(egui::Key::Space);
+    harness.run();
+    assert_eq!(harness.state().selected_button, Button::Grid(7));
+
+    // A segmented choice and the main button.
+    harness.state_mut().tab = Tab::Sensitivity;
+    harness.run();
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Button, "500 Hz")
+        .focus();
+    harness.run();
+    harness.press_key(egui::Key::Enter);
+    harness.run();
+    assert_eq!(harness.state().draft.polling, 500);
+
+    // An on/off switch.
+    harness.state_mut().tab = Tab::Settings;
+    harness.run();
+    harness
+        .get_by_label("Start the helper when I log in")
+        .focus();
+    harness.run();
+    harness.press_key(egui::Key::Space);
+    harness.run();
+    assert_eq!(harness.state().autostart, Ok(true));
+}

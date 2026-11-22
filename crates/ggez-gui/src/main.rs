@@ -105,7 +105,7 @@ fn main() -> anyhow::Result<()> {
                 height: 128,
             }))
             .with_inner_size([1080.0, 760.0])
-            .with_min_inner_size([980.0, 620.0]),
+            .with_min_inner_size([1020.0, 640.0]),
         ..Default::default()
     };
     eframe::run_native(

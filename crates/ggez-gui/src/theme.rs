@@ -150,6 +150,19 @@ pub fn apply(ctx: &egui::Context) {
     });
 }
 
+/// Outline a control that has keyboard focus, so someone moving through
+/// the window with Tab can see where they are.
+pub fn focus_ring(ui: &Ui, response: &Response, rect: Rect, radius: u8) {
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.expand(2.0),
+            CornerRadius::same(radius.saturating_add(2)),
+            Stroke::new(1.5, TEXT),
+            StrokeKind::Outside,
+        );
+    }
+}
+
 /// A rounded panel that groups related controls.
 pub fn card<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
     egui::Frame::new()
@@ -213,6 +226,7 @@ pub fn primary_button(ui: &mut Ui, enabled: bool, text: &str) -> Response {
     };
     let (rect, response) = ui.allocate_exact_size(size, sense);
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, text));
+    focus_ring(ui, &response, rect, CONTROL_RADIUS);
     let hot = enabled && response.hovered();
     let (fill, ink) = if !enabled {
         (RAISED, TEXT_FAINT)
@@ -259,6 +273,7 @@ pub fn segmented<T: Copy + PartialEq>(ui: &mut Ui, current: T, options: &[(T, &s
         let selected = *value == current;
         let response = ui.interact(cell, ui.id().with(("segment", *label)), Sense::click());
         response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, *label));
+        focus_ring(ui, &response, cell, CONTROL_RADIUS);
         let ink = if selected {
             ui.painter()
                 .rect_filled(cell, CornerRadius::same(CONTROL_RADIUS), ACCENT);
@@ -299,6 +314,7 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> bool {
     response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, true, state, label));
 
     let track = Rect::from_min_size(rect.min, egui::vec2(46.0, 26.0));
+    focus_ring(ui, &response, track, 13);
     let t = ui.ctx().animate_bool_with_time(response.id, *on, 0.12);
     ui.painter()
         .rect_filled(track, CornerRadius::same(13), lerp(RAISED_HOVER, ACCENT, t));
@@ -354,6 +370,7 @@ pub fn lerp(a: Color32, b: Color32, t: f32) -> Color32 {
 pub fn swatch(ui: &mut Ui, rgb: &mut [u8; 3], label: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(56.0, 36.0), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::ColorButton, true, label));
+    focus_ring(ui, &response, rect, CONTROL_RADIUS);
     let color = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
     let radius = CornerRadius::same(CONTROL_RADIUS);
     ui.painter().rect_filled(rect, radius, color);
@@ -393,6 +410,7 @@ pub fn swatch(ui: &mut Ui, rgb: &mut [u8; 3], label: &str) -> bool {
 pub fn dropdown_button(ui: &mut Ui, text: &str, width: f32) -> Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 32.0), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, true, text));
+    focus_ring(ui, &response, rect, CONTROL_RADIUS);
     let fill = if response.hovered() {
         RAISED_HOVER
     } else {
