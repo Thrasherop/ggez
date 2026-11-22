@@ -746,3 +746,95 @@ fn edits_in_progress_survive_a_change_outside_the_window() {
     harness.run_steps(2);
     assert_eq!(harness.state().draft.polling, 500);
 }
+
+/// The sliders are drawn by ggez, so they handle the keyboard themselves.
+#[test]
+fn sliders_work_from_the_keyboard() {
+    let (mut harness, _, _) = window("slider-keys");
+    click(&mut harness, "Power");
+    assert_eq!(harness.state().draft.sleep_minutes, 5);
+    harness.get_by_label("Minutes before sleep").focus();
+    harness.run();
+    harness.press_key(egui::Key::ArrowRight);
+    harness.run();
+    assert_eq!(harness.state().draft.sleep_minutes, 6);
+    harness.press_key(egui::Key::ArrowLeft);
+    harness.run();
+    harness.press_key(egui::Key::ArrowLeft);
+    harness.run();
+    assert_eq!(harness.state().draft.sleep_minutes, 4);
+    // The arrow keys moved the slider, not the focus.
+    assert!(harness.get_by_label("Minutes before sleep").is_focused());
+
+    // The dim timer moves in small steps below a minute and larger ones
+    // above, in both directions.
+    assert_eq!(harness.state().draft.dim_seconds, 30);
+    harness
+        .get_by_label("Seconds before the lights dim")
+        .focus();
+    harness.run();
+    for expected in [35, 40, 45, 50, 55, 60, 90] {
+        harness.press_key(egui::Key::ArrowRight);
+        harness.run();
+        assert_eq!(harness.state().draft.dim_seconds, expected);
+    }
+    for expected in [60, 55] {
+        harness.press_key(egui::Key::ArrowLeft);
+        harness.run();
+        assert_eq!(harness.state().draft.dim_seconds, expected);
+    }
+    assert!(harness.state().is_dirty());
+}
+
+#[test]
+fn a_slider_stops_at_the_ends_of_its_range() {
+    let (mut harness, _, _) = window("slider-ends");
+    click(&mut harness, "Power");
+    harness.state_mut().draft.sleep_minutes = 20;
+    harness.state_mut().draft.dim_seconds = 0;
+    harness.run();
+    harness.get_by_label("Minutes before sleep").focus();
+    harness.run();
+    harness.press_key(egui::Key::ArrowRight);
+    harness.run();
+    assert_eq!(harness.state().draft.sleep_minutes, 20);
+    harness
+        .get_by_label("Seconds before the lights dim")
+        .focus();
+    harness.run();
+    harness.press_key(egui::Key::ArrowLeft);
+    harness.run();
+    assert_eq!(harness.state().draft.dim_seconds, 0);
+    harness.press_key(egui::Key::ArrowRight);
+    harness.run();
+    assert_eq!(harness.state().draft.dim_seconds, 5);
+}
+
+#[test]
+fn a_slider_follows_the_pointer_and_reports_changes() {
+    let (mut harness, fake, _) = window("slider-click");
+    click(&mut harness, "Power");
+    // The middle of a slider from 0 to 20.
+    harness
+        .get_by_label("Minutes before sleep")
+        .simulate_click();
+    harness.run();
+    assert_eq!(harness.state().draft.sleep_minutes, 10);
+
+    // On the lighting page a change of brightness is previewed.
+    click(&mut harness, "Lighting");
+    requests(&fake);
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::Slider, "Brightness")
+        .focus();
+    // Not `run`: the rainbow in the preview never stops moving.
+    harness.run_steps(4);
+    harness.press_key(egui::Key::ArrowLeft);
+    harness.run_steps(4);
+    assert_eq!(harness.state().draft.brightness, 95);
+    let previews = requests(&fake);
+    assert!(
+        matches!(previews.as_slice(), [Request::Preview(p)] if p.brightness == Some(95)),
+        "{previews:?}"
+    );
+}

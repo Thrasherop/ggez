@@ -12,11 +12,11 @@ ggez closed, or on a computer that has never heard of it.
 > compile and pass their tests in CI but have not yet been run against a
 > mouse. Not made by or affiliated with SteelSeries.
 
-![The buttons page: a drawing of the mouse with every button clickable](docs/images/buttons.jpg)
+![The buttons page: a drawing of the mouse with every button clickable](docs/images/buttons.png)
 
 | | |
 | --- | --- |
-| ![The lighting page, with the three zones lit](docs/images/lighting.jpg) | ![The sensitivity page](docs/images/sensitivity.jpg) |
+| ![The lighting page: the mouse glowing in the colors chosen for its three zones](docs/images/lighting.png) | ![The sensitivity page](docs/images/sensitivity.png) |
 
 ## What it does
 

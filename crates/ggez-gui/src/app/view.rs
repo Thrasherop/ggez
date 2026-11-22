@@ -13,8 +13,7 @@ use crate::device::Status;
 use crate::draft::{snap_dpi, Draft, Effect, MAX_DPI_PRESETS, POLLING_RATES};
 use crate::mouse_view::{self, Lights};
 use crate::theme::{
-    self, ACCENT, ACCENT_DEEP, BG, CARD, DANGER, GOOD, LINE, RAISED, SIDEBAR, TEXT, TEXT_DIM,
-    TEXT_FAINT, WARNING,
+    self, ACCENT, CARD, DANGER, GOOD, LINE, SIDEBAR, TEXT, TEXT_DIM, TEXT_FAINT, WARNING,
 };
 
 const FIRST_RUN: &str = "These are the mouse's factory settings, not what is on your mouse now: the mouse cannot report its settings. Applying replaces everything on it, button bindings included.";
@@ -32,8 +31,12 @@ impl App {
             self.seen = self.draft.clone();
         }
 
+        theme::backdrop(
+            &ctx.layer_painter(egui::LayerId::background()),
+            ctx.screen_rect(),
+        );
         egui::SidePanel::left("sidebar")
-            .exact_width(236.0)
+            .exact_width(244.0)
             .resizable(false)
             .show_separator_line(false)
             .frame(
@@ -43,20 +46,12 @@ impl App {
             )
             .show(ctx, |ui| self.sidebar(ui));
         egui::TopBottomPanel::bottom("actions")
-            .exact_height(66.0)
+            .exact_height(72.0)
             .show_separator_line(false)
-            .frame(
-                egui::Frame::new()
-                    .fill(BG)
-                    .inner_margin(egui::Margin::symmetric(28, 0)),
-            )
+            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(32, 0)))
             .show(ctx, |ui| self.action_bar(ui));
         egui::CentralPanel::default()
-            .frame(
-                egui::Frame::new()
-                    .fill(BG)
-                    .inner_margin(egui::Margin::symmetric(28, 0)),
-            )
+            .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(32, 0)))
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
@@ -94,16 +89,21 @@ impl App {
                     );
                 });
             });
-        ui.add_space(6.0);
+        // The line between the sidebar and the page.
+        let edge = ui.max_rect().right() + 15.5;
+        ui.painter().vline(
+            edge,
+            ui.ctx().screen_rect().y_range(),
+            Stroke::new(1.0, LINE),
+        );
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
-            ui.add_space(6.0);
-            ui.label(
-                RichText::new("ggez")
-                    .font(FontId::new(28.0, theme::strong()))
-                    .color(ACCENT),
-            );
+            ui.spacing_mut().item_spacing.x = 9.0;
+            ui.add_space(4.0);
+            theme::logo(ui, 26.0);
+            ui.label(RichText::new("ggez").font(FontId::new(24.0, theme::strong())));
         });
-        ui.add_space(14.0);
+        ui.add_space(18.0);
         self.profile_picker(ui);
 
         for (tab, name) in Tab::ALL {
@@ -122,7 +122,7 @@ impl App {
         }
         ui.horizontal(|ui| {
             ui.add_space(6.0);
-            ui.label(RichText::new("Profile").color(TEXT_FAINT).size(11.5));
+            theme::caption(ui, "Profile");
         });
         let shown = self
             .current_profile
@@ -232,50 +232,40 @@ impl App {
                 },
             ),
         };
-        egui::Frame::new()
-            .fill(CARD)
-            .stroke(Stroke::new(1.0, LINE))
-            .corner_radius(CornerRadius::same(theme::CARD_RADIUS))
-            .inner_margin(egui::Margin::same(14))
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                {
-                    ui.spacing_mut().item_spacing.y = 5.0;
-                    ui.label(
-                        RichText::new("Aerox 9 Wireless").font(FontId::new(14.5, theme::strong())),
-                    );
-                    ui.horizontal(|ui| {
-                        theme::dot(ui, color);
-                        ui.label(RichText::new(title).size(13.5));
-                    });
-                    if !detail.is_empty() {
-                        ui.label(RichText::new(detail).color(TEXT_DIM).size(12.5));
-                    }
-                    if let Status::Connected {
-                        battery, firmware, ..
-                    } = &self.status
-                    {
-                        ui.add_space(4.0);
-                        match battery {
-                            Some((percent, charging)) => battery_bar(ui, *percent, *charging),
-                            None => {
-                                ui.label(
-                                    RichText::new("Battery level unavailable")
-                                        .color(TEXT_DIM)
-                                        .size(12.5),
-                                );
-                            }
-                        }
-                        if let Some(version) = firmware {
-                            ui.label(
-                                RichText::new(format!("Firmware {version}"))
-                                    .color(TEXT_FAINT)
-                                    .size(12.0),
-                            );
-                        }
+        theme::panel(ui, 14, |ui| {
+            ui.spacing_mut().item_spacing.y = 5.0;
+            ui.label(RichText::new("Aerox 9 Wireless").font(FontId::new(14.5, theme::strong())));
+            ui.horizontal(|ui| {
+                theme::dot(ui, color);
+                ui.label(RichText::new(title).size(13.5));
+            });
+            if !detail.is_empty() {
+                ui.label(RichText::new(detail).color(TEXT_DIM).size(12.5));
+            }
+            if let Status::Connected {
+                battery, firmware, ..
+            } = &self.status
+            {
+                ui.add_space(4.0);
+                match battery {
+                    Some((percent, charging)) => battery_bar(ui, *percent, *charging),
+                    None => {
+                        ui.label(
+                            RichText::new("Battery level unavailable")
+                                .color(TEXT_DIM)
+                                .size(12.5),
+                        );
                     }
                 }
-            });
+                if let Some(version) = firmware {
+                    ui.label(
+                        RichText::new(format!("Firmware {version}"))
+                            .color(TEXT_FAINT)
+                            .size(12.0),
+                    );
+                }
+            }
+        });
     }
 
     fn action_bar(&mut self, ui: &mut Ui) {
@@ -299,7 +289,7 @@ impl App {
             if can_apply && apply.clicked() {
                 self.request_apply();
             }
-            let revert = egui::Button::new("Revert").min_size(vec2(84.0, 38.0));
+            let revert = egui::Button::new("Revert").min_size(vec2(88.0, 40.0));
             let revert = ui
                 .add_enabled(self.draft != self.applied, revert)
                 .on_hover_text("Discard changes made since the last apply.");
@@ -365,6 +355,24 @@ impl App {
         }
     }
 
+    /// What the mouse's lights are set to show.
+    fn lights(&self) -> Lights {
+        match self.draft.effect {
+            Effect::Static => Lights::Zones(self.draft.zones),
+            Effect::Rainbow => Lights::Rainbow,
+        }
+    }
+
+    /// How bright the drawings show the lights, from 0 to 1. Even the
+    /// lowest setting is drawn bright enough to tell the colors apart.
+    fn light_level(&self) -> f32 {
+        if self.draft.battery_saver || self.draft.brightness == 0 {
+            0.0
+        } else {
+            0.35 + 0.65 * self.draft.brightness as f32 / 100.0
+        }
+    }
+
     fn sensitivity(&mut self, ui: &mut Ui) {
         theme::page_title(
             ui,
@@ -389,11 +397,14 @@ impl App {
                         self.draft.dpi_selected = index;
                     }
                     let mut value = self.draft.dpi[index];
-                    let slider = egui::Slider::new(&mut value, 100..=18_000)
-                        .logarithmic(true)
-                        .show_value(false)
-                        .step_by(100.0);
-                    ui.add(slider);
+                    theme::slider(
+                        ui,
+                        &mut value,
+                        100..=18_000,
+                        |_| 100,
+                        true,
+                        &format!("Level {} sensitivity", index + 1),
+                    );
                     ui.add_sized(
                         [96.0, 32.0],
                         egui::DragValue::new(&mut value)
@@ -473,10 +484,12 @@ impl App {
         theme::card(ui, |ui| {
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = 18.0;
+                let lights = self.lights();
                 let clicked = mouse_view::buttons(
                     ui,
                     &self.draft.buttons,
                     self.selected_button,
+                    (&lights, self.light_level()),
                     &describe,
                     &button_title,
                 );
@@ -521,8 +534,9 @@ impl App {
         ui.add_space(8.0);
 
         let kind = Kind::of(action);
-        ui.label(RichText::new("What it does").color(TEXT_DIM).size(12.5));
+        theme::caption(ui, "What it does");
         egui::ComboBox::from_id_salt("action-kind")
+            .icon(list_mark)
             .selected_text(kind.label())
             .width(ui.available_width().min(250.0))
             .height(320.0)
@@ -648,7 +662,8 @@ impl App {
             Action::Keys(codes)
         };
 
-        ui.label(RichText::new("Held with").color(TEXT_DIM).size(12.5));
+        ui.add_space(2.0);
+        theme::caption(ui, "Held with");
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             for (name, code) in MODIFIERS {
@@ -667,7 +682,8 @@ impl App {
                 }
             }
         });
-        ui.label(RichText::new("Key").color(TEXT_DIM).size(12.5));
+        ui.add_space(2.0);
+        theme::caption(ui, "Key");
         ui.horizontal(|ui| {
             let current = key.map(|code| Action::key(code).to_string()["key:".len()..].to_string());
             let shown = current.as_deref().map_or("(none)".to_string(), key_title);
@@ -826,11 +842,7 @@ impl App {
         theme::card(ui, |ui| {
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = 30.0;
-                let lights = match self.draft.effect {
-                    Effect::Static => Lights::Zones(self.draft.zones),
-                    Effect::Rainbow => Lights::Rainbow,
-                };
-                mouse_view::lighting(ui, &lights);
+                mouse_view::lighting(ui, &self.lights(), self.light_level());
                 ui.vertical(|ui| {
                     // Everything in this column is placed by hand so that each
                     // zone's controls sit level with that zone in the drawing.
@@ -926,14 +938,16 @@ impl App {
                 "How bright the lights are. Stored on the mouse.",
             );
             ui.horizontal(|ui| {
-                changed |= ui
-                    .add(
-                        egui::Slider::new(&mut self.draft.brightness, 0..=100)
-                            .step_by(5.0)
-                            .show_value(false),
-                    )
-                    .on_hover_text("The mouse has 16 brightness steps.")
-                    .changed();
+                changed |= theme::slider(
+                    ui,
+                    &mut self.draft.brightness,
+                    0..=100,
+                    |_| 5,
+                    false,
+                    "Brightness",
+                )
+                .on_hover_text("The mouse has 16 brightness steps.")
+                .changed();
                 let text = match self.draft.brightness {
                     0 => "Off".to_string(),
                     percent => format!("{percent}%"),
@@ -982,6 +996,7 @@ impl App {
                     "What the mouse shows on its own after power-on. Stored on the mouse.",
                 );
                 egui::ComboBox::from_id_salt("default-lighting")
+                    .icon(list_mark)
                     .selected_text(default_lighting_title(self.draft.default_lighting))
                     .width(ui.available_width().min(260.0))
                     .show_ui(ui, |ui| {
@@ -1032,14 +1047,7 @@ impl App {
                     } else {
                         ACCENT
                     };
-                    let (rect, _) =
-                        ui.allocate_exact_size(vec2(ui.available_width(), 8.0), Sense::hover());
-                    ui.painter()
-                        .rect_filled(rect, CornerRadius::same(4), RAISED);
-                    let mut filled = rect;
-                    filled.set_width(rect.width() * f32::from(percent.min(100)) / 100.0);
-                    ui.painter()
-                        .rect_filled(filled, CornerRadius::same(4), color);
+                    theme::meter(ui, 8.0, f32::from(percent) / 100.0, color);
                 }
                 Status::Connected { .. } => hint(ui, "The mouse did not report its battery level."),
                 _ => hint(ui, "Connect the mouse to see its battery level."),
@@ -1068,7 +1076,14 @@ impl App {
                 "How long the mouse waits, untouched, before it goes to sleep.",
             );
             ui.horizontal(|ui| {
-                ui.add(egui::Slider::new(&mut self.draft.sleep_minutes, 0..=20).show_value(false));
+                theme::slider(
+                    ui,
+                    &mut self.draft.sleep_minutes,
+                    0..=20,
+                    |_| 1,
+                    false,
+                    "Minutes before sleep",
+                );
                 let text = match self.draft.sleep_minutes {
                     0 => "Never".to_string(),
                     1 => "1 minute".to_string(),
@@ -1092,10 +1107,19 @@ impl App {
                 "How long the mouse waits, untouched, before it dims its lights.",
             );
             ui.horizontal(|ui| {
-                ui.add(
-                    egui::Slider::new(&mut self.draft.dim_seconds, 0..=1200)
-                        .logarithmic(true)
-                        .show_value(false),
+                // Fine steps where seconds matter, coarser ones beyond.
+                let step = |seconds: u32| match seconds {
+                    0..=59 => 5,
+                    60..=299 => 30,
+                    _ => 60,
+                };
+                theme::slider(
+                    ui,
+                    &mut self.draft.dim_seconds,
+                    0..=1200,
+                    step,
+                    true,
+                    "Seconds before the lights dim",
                 );
                 let text = match self.draft.dim_seconds {
                     0 => "Never".to_string(),
@@ -1328,21 +1352,32 @@ fn nav_item(ui: &mut Ui, selected: bool, tab: Tab, name: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
     response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, name));
     theme::focus_ring(ui, &response, rect, theme::CONTROL_RADIUS);
-    let (fill, ink) = if selected {
-        (Some(ACCENT_DEEP.gamma_multiply(0.55)), TEXT)
-    } else if response.hovered() {
-        (Some(RAISED), TEXT)
-    } else {
-        (None, TEXT_DIM)
-    };
-    if let Some(fill) = fill {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(theme::CONTROL_RADIUS), fill);
-    }
-    if selected {
-        let bar = Rect::from_min_size(rect.left_top() + vec2(0.0, 10.0), vec2(3.0, 20.0));
+    let radius = CornerRadius::same(10);
+    let ink = if selected {
+        // Lit from the left by its marker.
+        ui.painter().add(theme::gradient(
+            rect,
+            10.0,
+            ACCENT.gamma_multiply(0.17),
+            Color32::WHITE.gamma_multiply(0.03),
+            theme::Along::Across,
+        ));
+        let bar = Rect::from_min_size(rect.left_top() + vec2(0.0, 11.0), vec2(3.0, 18.0));
+        ui.painter().add(theme::glow(
+            bar.translate(vec2(3.0, 0.0)),
+            3.0,
+            ACCENT.gamma_multiply(0.5),
+            8.0,
+        ));
         ui.painter().rect_filled(bar, CornerRadius::same(2), ACCENT);
-    }
+        TEXT
+    } else if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, radius, Color32::WHITE.gamma_multiply(0.05));
+        TEXT
+    } else {
+        TEXT_DIM
+    };
     let icon_color = if selected { ACCENT } else { ink };
     nav_icon(
         ui,
@@ -1438,14 +1473,8 @@ fn battery_bar(ui: &mut Ui, percent: u8, charging: bool) {
             ui.label(RichText::new(text).size(12.5));
         });
     });
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 6.0), Sense::hover());
-    ui.painter()
-        .rect_filled(rect, CornerRadius::same(3), RAISED);
-    let mut filled = rect;
-    filled.set_width(rect.width() * f32::from(percent.min(100)) / 100.0);
-    ui.painter()
-        .rect_filled(filled, CornerRadius::same(3), color);
-    response.on_hover_text("Battery level, in steps of 5%");
+    theme::meter(ui, 6.0, f32::from(percent) / 100.0, color)
+        .on_hover_text("Battery level, in steps of 5%");
 }
 
 /// All the CPI levels on one line, so their spread can be seen at a glance.
@@ -1460,8 +1489,7 @@ fn cpi_scale(ui: &mut Ui, levels: &[u32], active: usize) {
         egui::lerp(rail.clone(), t.clamp(0.0, 1.0))
     };
     let y = rect.top() + 18.0;
-    ui.painter()
-        .hline(rail.clone(), y, Stroke::new(2.0, RAISED));
+    ui.painter().hline(rail.clone(), y, Stroke::new(2.0, LINE));
     for tick in [100u32, 200, 400, 800, 1600, 3200, 6400, 18_000] {
         let x = x_of(tick);
         ui.painter().line_segment(
@@ -1547,6 +1575,17 @@ fn choice(ui: &mut Ui, selected: bool, text: &str) -> bool {
     )
     .on_hover_cursor(egui::CursorIcon::PointingHand)
     .clicked()
+}
+
+/// The mark on the built-in list controls, to match the custom ones.
+fn list_mark(
+    ui: &Ui,
+    rect: Rect,
+    _visuals: &egui::style::WidgetVisuals,
+    _is_open: bool,
+    _above_or_below: egui::AboveOrBelow,
+) {
+    theme::chevron(ui.painter(), rect.center(), TEXT_DIM);
 }
 
 fn hint(ui: &mut Ui, text: &str) {
