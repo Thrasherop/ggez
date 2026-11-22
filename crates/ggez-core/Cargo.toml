@@ -1,0 +1,15 @@
+[package]
+name = "ggez-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Protocol and device layer for SteelSeries Aerox 9 Wireless mice"
+
+[features]
+default = ["hid"]
+# Real hardware access. Disable to build the pure protocol layer only.
+hid = ["dep:hidapi"]
+
+[dependencies]
+thiserror = "2"
+hidapi = { version = "2", optional = true }
