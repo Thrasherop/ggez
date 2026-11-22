@@ -5,6 +5,7 @@ use crate::transport::Transport;
 use crate::Result;
 
 const READ_TIMEOUT_MS: i32 = 200;
+const MAX_FOREIGN_REPLIES: usize = 16;
 
 pub struct Aerox9<T: Transport> {
     transport: T,
@@ -54,9 +55,20 @@ impl<T: Transport> Aerox9<T> {
     }
 
     pub fn battery(&mut self) -> Result<Battery> {
-        self.write(protocol::battery_query(self.link))?;
+        let query = protocol::battery_query(self.link);
+        let command = query[0];
+        self.write(query)?;
+        // Other software (SteelSeries GG, if running) shares this interface,
+        // so replies to its commands can arrive first. Replies echo the
+        // command byte; skip the ones that are not ours.
         let mut buf = [0u8; 64];
-        let n = self.transport.read(&mut buf, READ_TIMEOUT_MS)?;
+        let mut n = 0;
+        for _ in 0..MAX_FOREIGN_REPLIES {
+            n = self.transport.read(&mut buf, READ_TIMEOUT_MS)?;
+            if n == 0 || buf[0] == command {
+                break;
+            }
+        }
         Ok(protocol::parse_battery(&buf[..n])?)
     }
 
@@ -125,6 +137,15 @@ mod tests {
         let b = m.battery().unwrap();
         assert_eq!((b.percent, b.charging), (50, true));
         assert_eq!(m.transport().written[1], vec![0x00, 0xD2]);
+    }
+
+    #[test]
+    fn battery_skips_replies_meant_for_other_software() {
+        let mut t = MockTransport::new();
+        t.responses.push_back(vec![0x61, 0x00, 0x32]);
+        t.responses.push_back(vec![0xD2, 0x0B]);
+        let mut m = Aerox9::new(t, Link::Wireless);
+        assert_eq!(m.battery().unwrap().percent, 50);
     }
 
     #[test]
