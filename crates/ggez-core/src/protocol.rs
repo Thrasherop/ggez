@@ -247,6 +247,23 @@ pub fn save(link: Link) -> Vec<u8> {
     link.apply(vec![0x11, 0x00])
 }
 
+/// Ask for the firmware version. The reply is the version as ASCII text
+/// (for example `1.2.4`) and, unlike other replies, does not echo the command.
+pub fn firmware_query(link: Link) -> Vec<u8> {
+    link.apply(vec![0x90])
+}
+
+/// Extract the version from a reply to [`firmware_query`], if it is one.
+pub fn parse_firmware(response: &[u8]) -> Option<String> {
+    let end = response.iter().position(|&b| b == 0).unwrap_or(response.len());
+    let text = &response[..end];
+    let plausible = text.len() >= 3
+        && text[0].is_ascii_digit()
+        && text.contains(&b'.')
+        && text.iter().all(|&b| b.is_ascii_digit() || b == b'.');
+    plausible.then(|| String::from_utf8_lossy(text).into_owned())
+}
+
 pub fn battery_query(link: Link) -> Vec<u8> {
     link.apply(vec![0x92])
 }

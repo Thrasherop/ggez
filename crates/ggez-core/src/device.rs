@@ -137,6 +137,32 @@ impl<T: Transport> Aerox9<T> {
         Ok(replies)
     }
 
+    /// The mouse's firmware version, e.g. `1.2.4`.
+    pub fn firmware_version(&mut self) -> Result<String> {
+        let query = protocol::firmware_query(self.link);
+        let command = query[0];
+        let mut buf = [0u8; 64];
+        for _ in 0..ATTEMPTS {
+            self.drain()?;
+            self.write(query.clone())?;
+            let deadline = Instant::now() + REPLY_WAIT;
+            loop {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                let n = self.transport.read(&mut buf, left.as_millis().max(1) as i32)?;
+                if n == 0 {
+                    break;
+                }
+                if let Some(version) = protocol::parse_firmware(&buf[..n]) {
+                    return Ok(version);
+                }
+            }
+        }
+        Err(Error::NoAck(command))
+    }
+
     pub fn battery(&mut self) -> Result<Battery> {
         let reply = self.request(protocol::battery_query(self.link))?;
         Ok(protocol::parse_battery(&reply)?)
@@ -238,6 +264,16 @@ mod tests {
         t.responses.push_back(vec![0x40, 0xFF, 0x00]);
         let mut m = Aerox9::new(t, Link::Wireless);
         assert!(matches!(m.battery(), Err(Error::Offline)));
+    }
+
+    #[test]
+    fn firmware_version_skips_other_replies() {
+        let mut t = MockTransport::new();
+        t.responses.push_back(vec![0x61, 0x00, 0x32, 0x2E, 0x34]);
+        t.responses.push_back(vec![0x31, 0x2E, 0x32, 0x2E, 0x34, 0x00, 0x00]);
+        let mut m = Aerox9::new(t, Link::Wireless);
+        assert_eq!(m.firmware_version().unwrap(), "1.2.4");
+        assert_eq!(m.transport().written[0], vec![0x00, 0xD0]);
     }
 
     #[test]

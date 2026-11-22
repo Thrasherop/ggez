@@ -39,6 +39,8 @@ enum Command {
     List,
     /// Show battery level and charging state.
     Battery,
+    /// Show the mouse's firmware version.
+    Firmware,
     /// Set DPI presets, e.g. `ggez dpi 800,1600,3200 --select 2`.
     Dpi {
         /// 1 to 5 values from 100 to 18000, comma separated.
@@ -115,8 +117,8 @@ fn main() -> Result<()> {
                 LinkArg::Wireless => Link::Wireless,
             };
             let mut mouse = Aerox9::new(MockTransport::accepting(), link);
-            if let Command::Battery = cli.command {
-                bail!("battery cannot be dry-run: it needs a reply from the mouse");
+            if let Command::Battery | Command::Firmware = cli.command {
+                bail!("this command cannot be dry-run: it needs a reply from the mouse");
             }
             run(&mut mouse, &cli)?;
             for packet in &mouse.transport().written {
@@ -165,6 +167,10 @@ fn run<T: Transport>(mouse: &mut Aerox9<T>, cli: &Cli) -> Result<()> {
                 .context("could not read battery (is the mouse switched on?)")?;
             let state = if b.charging { ", charging" } else { "" };
             println!("{}%{}", b.percent, state);
+            return Ok(());
+        }
+        Command::Firmware => {
+            println!("{}", mouse.firmware_version()?);
             return Ok(());
         }
         Command::Save => return Ok(mouse.save()?),

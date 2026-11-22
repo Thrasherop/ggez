@@ -6,8 +6,8 @@ Windows, macOS and Linux.
 
 Status: early. Every command has been accepted by a real Aerox 9 Wireless
 through its 2.4 GHz dongle (firmware 1.2.4), including with SteelSeries GG
-running. Button bindings were checked by pressing all twelve side buttons.
-The USB cable path is untested, and nobody has yet checked the lights by eye.
+running. Button bindings were checked by pressing all twelve side buttons, and zone
+colors by eye. The USB cable path is untested.
 
 ## What works (in code)
 
