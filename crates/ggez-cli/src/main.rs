@@ -155,41 +155,44 @@ fn main() -> Result<()> {
 
 fn run_cli() -> Result<()> {
     let cli = Cli::parse();
-
-    if let Command::List = cli.command {
-        return list();
-    }
     match &cli.command {
-        Command::Daemon { profile } => return daemon(profile.clone()),
-        Command::Autostart { action } => return autostart_command(*action),
+        Command::List => list(),
+        Command::Listen { seconds } => listen_command(*seconds),
+        Command::Daemon { profile } => daemon(profile.clone()),
+        Command::Autostart { action } => autostart_command(*action),
         Command::ProfilePath => {
             println!("{}", paths::profile_path()?.display());
-            return Ok(());
+            Ok(())
         }
-        _ => {}
+        _ => with_mouse(&cli),
     }
-    if let Command::Listen { seconds } = cli.command {
-        let start = std::time::Instant::now();
-        listen(
-            std::time::Duration::from_secs(seconds),
-            |interface, report| {
-                // SteelSeries GG, if running, streams lighting commands; hide the
-                // mouse's acknowledgements of those.
-                if report.starts_with(&[0x61, 0x00]) {
-                    return;
-                }
-                let len = report.iter().rposition(|&b| b != 0).map_or(1, |i| i + 1);
-                println!(
-                    "{:8.3}  if{}  {}",
-                    start.elapsed().as_secs_f64(),
-                    interface,
-                    hex(&report[..len])
-                );
-            },
-        )?;
-        return Ok(());
-    }
+}
 
+/// Print every report the mouse sends, for protocol research.
+fn listen_command(seconds: u64) -> Result<()> {
+    let start = std::time::Instant::now();
+    listen(
+        std::time::Duration::from_secs(seconds),
+        |interface, report| {
+            // SteelSeries GG, if running, streams lighting commands; hide the
+            // mouse's acknowledgements of those.
+            if report.starts_with(&[0x61, 0x00]) {
+                return;
+            }
+            let len = report.iter().rposition(|&b| b != 0).map_or(1, |i| i + 1);
+            println!(
+                "{:8.3}  if{}  {}",
+                start.elapsed().as_secs_f64(),
+                interface,
+                hex(&report[..len])
+            );
+        },
+    )?;
+    Ok(())
+}
+
+/// Run a command that talks to the mouse, or to a stand-in for a dry run.
+fn with_mouse(cli: &Cli) -> Result<()> {
     match cli.dry_run {
         Some(link) => {
             let link = match link {
@@ -200,7 +203,7 @@ fn run_cli() -> Result<()> {
             if let Command::Battery | Command::Firmware = cli.command {
                 bail!("this command cannot be dry-run: it needs a reply from the mouse");
             }
-            run(&mut mouse, &cli)?;
+            run(&mut mouse, cli)?;
             for packet in &mouse.transport().written {
                 println!("{}", hex(packet));
             }
@@ -208,7 +211,7 @@ fn run_cli() -> Result<()> {
         None => {
             let (transport, link) = HidTransport::open()?;
             let mut mouse = Aerox9::new(transport, link);
-            run(&mut mouse, &cli)?;
+            run(&mut mouse, cli)?;
         }
     }
     Ok(())
