@@ -80,12 +80,18 @@ impl<T: Transport> Aerox9<T> {
     }
 
     /// Send a command and wait for the reply that echoes its command byte.
+    fn request(&mut self, payload: Vec<u8>) -> Result<Vec<u8>> {
+        let command = payload[0];
+        self.exchange(payload, |reply| reply[0] == command)
+    }
+
+    /// Send a command and wait for the reply that `is_reply` recognises.
     ///
     /// Other software (SteelSeries GG, if running) shares this interface and
     /// can crowd our reply out of the OS's small input queue, so replies that
     /// are not ours are skipped and the command is resent if none arrives.
     /// Every command here is idempotent, so resending is safe.
-    fn request(&mut self, payload: Vec<u8>) -> Result<Vec<u8>> {
+    fn exchange(&mut self, payload: Vec<u8>, is_reply: impl Fn(&[u8]) -> bool) -> Result<Vec<u8>> {
         let command = payload[0];
         let mut buf = [0u8; 64];
         let mut link_down = false;
@@ -104,7 +110,7 @@ impl<T: Transport> Aerox9<T> {
                 if n == 0 {
                     break;
                 }
-                if buf[0] == command {
+                if is_reply(&buf[..n]) {
                     return Ok(buf[..n].to_vec());
                 }
                 // The dongle answers `40 ff` itself when it has no radio link
@@ -150,30 +156,11 @@ impl<T: Transport> Aerox9<T> {
 
     /// The mouse's firmware version, e.g. `1.2.4`.
     pub fn firmware_version(&mut self) -> Result<String> {
+        // This reply is the version text itself; it does not echo the command.
         let query = protocol::firmware_query(self.link);
         let command = query[0];
-        let mut buf = [0u8; 64];
-        self.drain()?;
-        for wait in REPLY_WAITS_MS {
-            self.write(query.clone())?;
-            let deadline = Instant::now() + Duration::from_millis(wait);
-            loop {
-                let left = deadline.saturating_duration_since(Instant::now());
-                if left.is_zero() {
-                    break;
-                }
-                let n = self
-                    .transport
-                    .read(&mut buf, left.as_millis().max(1) as i32)?;
-                if n == 0 {
-                    break;
-                }
-                if let Some(version) = protocol::parse_firmware(&buf[..n]) {
-                    return Ok(version);
-                }
-            }
-        }
-        Err(Error::NoAck(command))
+        let reply = self.exchange(query, |reply| protocol::parse_firmware(reply).is_some())?;
+        protocol::parse_firmware(&reply).ok_or(Error::NoAck(command))
     }
 
     pub fn battery(&mut self) -> Result<Battery> {

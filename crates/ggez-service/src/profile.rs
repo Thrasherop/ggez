@@ -39,7 +39,10 @@ pub struct Profile {
     pub effect: Option<String>,
     #[serde(default, skip_serializing_if = "Colors::is_empty")]
     pub colors: Colors,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "in_physical_order"
+    )]
     pub buttons: Option<BTreeMap<String, String>>,
 }
 
@@ -56,6 +59,23 @@ pub struct Colors {
     pub middle: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bottom: Option<String>,
+}
+
+/// Write bindings in the order the buttons sit on the mouse (`g2` before
+/// `g10`), not in alphabetical order.
+fn in_physical_order<S: serde::Serializer>(
+    buttons: &Option<BTreeMap<String, String>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    let position = |name: &str| {
+        name.parse::<Button>()
+            .ok()
+            .and_then(|button| Button::ALL.iter().position(|b| *b == button))
+            .unwrap_or(usize::MAX)
+    };
+    let mut entries: Vec<(&String, &String)> = buttons.iter().flatten().collect();
+    entries.sort_by_key(|(name, _)| position(name));
+    serializer.collect_map(entries)
 }
 
 impl Colors {
@@ -349,6 +369,22 @@ all = \"red\"
     #[test]
     fn unknown_keys_are_rejected() {
         assert!(Profile::parse("poling = 1000").is_err());
+    }
+
+    #[test]
+    fn buttons_are_written_in_physical_order() {
+        let text = "[buttons]
+g10 = \"left\"
+g2 = \"left\"
+left = \"left\"
+scroll-up = \"left\"
+";
+        let written = Profile::parse(text).unwrap().to_toml().unwrap();
+        let order: Vec<&str> = written
+            .lines()
+            .filter_map(|l| l.split(' ').next())
+            .collect();
+        assert_eq!(order, ["[buttons]", "left", "g2", "g10", "scroll-up"]);
     }
 
     #[test]

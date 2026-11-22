@@ -63,6 +63,10 @@ pub struct App {
     /// The draft as of the previous frame, to notice edits.
     seen: Draft,
     status: Status,
+    gg_running: bool,
+    /// No saved profile existed at start, so the window shows factory
+    /// settings rather than anything known about this mouse.
+    first_run: bool,
     notice: Notice,
     applying: bool,
     /// The last apply failed, so the mouse may not match `applied`.
@@ -90,6 +94,7 @@ impl App {
         helper_running_here: bool,
     ) -> Self {
         let mut notice = Notice::None;
+        let first_run = profile_path.as_deref().is_some_and(|p| !p.exists());
         let draft = match profile_path
             .as_deref()
             .filter(|p| p.exists())
@@ -111,6 +116,8 @@ impl App {
             seen: draft.clone(),
             draft,
             status: Status::Unknown,
+            gg_running: false,
+            first_run,
             notice,
             applying: false,
             apply_failed: false,
@@ -139,6 +146,7 @@ impl App {
         for reply in self.device.poll() {
             match reply {
                 Reply::Status(status) => self.status = status,
+                Reply::GgRunning(running) => self.gg_running = running,
                 Reply::Applied(Ok(())) => {
                     self.applying = false;
                     self.apply_failed = false;
@@ -167,6 +175,7 @@ impl App {
             }
         }
         self.applied = self.draft.clone();
+        self.first_run = false;
         self.applying = true;
         self.notice = Notice::Working("Applying…".into());
         self.device.send(Request::Apply(profile));
@@ -221,6 +230,7 @@ impl App {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.add_space(8.0);
+                    self.banners(ui);
                     match self.tab {
                         Tab::Sensitivity => self.sensitivity(ui),
                         Tab::Buttons => self.buttons(ui),
@@ -232,6 +242,26 @@ impl App {
                 });
         });
         self.dialogs(ctx);
+    }
+
+    /// Things the user should know whatever page they are on.
+    fn banners(&mut self, ui: &mut egui::Ui) {
+        if self.gg_running {
+            note(ui, ggez_service::gg::ADVICE);
+            ui.add_space(10.0);
+        }
+        if self.first_run {
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_max_width(560.0);
+                ui.label(
+                    "These are the mouse's factory settings, not what is on your mouse now: \n                     the mouse cannot report its settings. Applying replaces everything on it, \n                     button bindings included.",
+                );
+                if ui.button("Got it").clicked() {
+                    self.first_run = false;
+                }
+            });
+            ui.add_space(10.0);
+        }
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {

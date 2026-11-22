@@ -370,3 +370,42 @@ fn export_is_confirmed_even_with_pending_changes() {
     click(&mut harness, "500 Hz");
     harness.get_by_label("You have changes that are not on the mouse yet.");
 }
+
+#[test]
+fn first_run_says_the_window_shows_factory_settings() {
+    let (mut harness, _, _) = window("first-run");
+    assert!(harness.state().first_run);
+    click(&mut harness, "Got it");
+    assert!(!harness.state().first_run);
+    assert!(harness
+        .query_by_role_and_label(egui::accesskit::Role::Button, "Got it")
+        .is_none());
+}
+
+#[test]
+fn applying_ends_the_first_run_notice() {
+    let (mut harness, _, _) = window("first-run-apply");
+    click(&mut harness, "Apply to mouse");
+    assert!(!harness.state().first_run);
+}
+
+#[test]
+fn an_existing_profile_means_no_first_run_notice() {
+    let path = temp_dir("not-first").join("profile.toml");
+    std::fs::write(&path, "polling = 500\n").unwrap();
+    let fake = Fake::default();
+    let app = App::new(Box::new(fake.clone()), Box::new(fake), Some(path), false);
+    assert!(!app.first_run);
+}
+
+#[test]
+fn a_running_gg_is_called_out() {
+    let (mut harness, fake, _) = window("gg");
+    assert!(harness.query_by_label(ggez_service::gg::ADVICE).is_none());
+    reply(&fake, Reply::GgRunning(true));
+    harness.run();
+    harness.get_by_label(ggez_service::gg::ADVICE);
+    reply(&fake, Reply::GgRunning(false));
+    harness.run();
+    assert!(harness.query_by_label(ggez_service::gg::ADVICE).is_none());
+}

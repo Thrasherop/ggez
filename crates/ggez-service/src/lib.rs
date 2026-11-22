@@ -3,6 +3,7 @@
 //! at login. Shared by the command-line tool and the graphical app.
 
 pub mod autostart;
+pub mod gg;
 pub mod helper;
 pub mod paths;
 pub mod profile;

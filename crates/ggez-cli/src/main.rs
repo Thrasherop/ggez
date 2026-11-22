@@ -5,7 +5,7 @@ use ggez_core::{
     Aerox9, Button, ButtonMap, DefaultLighting, Link, MockTransport, PollingRate, Rgb, Transport,
     Zone,
 };
-use ggez_service::{autostart, helper, paths, Profile};
+use ggez_service::{autostart, gg, helper, paths, Profile};
 
 /// Configure a SteelSeries Aerox 9 Wireless without SteelSeries GG.
 #[derive(Parser)]
@@ -136,6 +136,24 @@ enum Command {
 }
 
 fn main() -> Result<()> {
+    let result = run_cli();
+    // A command the mouse never answered is the classic symptom of GG
+    // talking over us; say so instead of leaving a bare timeout.
+    let unanswered = result.as_ref().err().is_some_and(|error| {
+        error.chain().any(|cause| {
+            matches!(
+                cause.downcast_ref::<ggez_core::Error>(),
+                Some(ggez_core::Error::NoAck(_) | ggez_core::Error::Offline)
+            )
+        })
+    });
+    if unanswered && gg::is_running() {
+        return result.context(gg::ADVICE);
+    }
+    result
+}
+
+fn run_cli() -> Result<()> {
     let cli = Cli::parse();
 
     if let Command::List = cli.command {

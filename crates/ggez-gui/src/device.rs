@@ -24,6 +24,8 @@ pub enum Request {
 pub enum Reply {
     Status(Status),
     Applied(Result<(), String>),
+    /// Whether SteelSeries GG is running and fighting over the mouse.
+    GgRunning(bool),
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -110,7 +112,13 @@ fn run(requests: Receiver<Request>, replies: Sender<Reply>, wake: impl Fn()) {
         };
 
         let reply = match request {
-            Request::Refresh => Reply::Status(status(&mut firmware)),
+            Request::Refresh => {
+                let gg = Reply::GgRunning(ggez_service::gg::is_running());
+                if replies.send(gg).is_err() {
+                    return;
+                }
+                Reply::Status(status(&mut firmware))
+            }
             Request::Preview(profile) => {
                 // A failed preview is not worth interrupting the user for;
                 // the status line already shows when the mouse is away.
