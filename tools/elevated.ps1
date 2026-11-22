@@ -38,6 +38,16 @@ try {
             $seconds = [int]$request.seconds
             if ($name -notmatch '^[A-Za-z0-9_-]{1,60}$') { throw "bad capture name '$name'" }
             if ($seconds -lt 1 -or $seconds -gt 900) { throw "seconds must be 1-900" }
+            if ($request.restartGG) {
+                # Record what GG sends a mouse when it starts: stop it now and
+                # start it again a few seconds into the capture.
+                Get-Process | Where-Object { $_.Name -like 'SteelSeries*' } | Stop-Process -Force
+                Start-Sleep -Seconds 2
+                Get-Process | Where-Object { $_.Name -like 'SteelSeries*' } | Stop-Process -Force
+                Start-Process powershell -WindowStyle Hidden -ArgumentList @(
+                    '-NoProfile', '-Command',
+                    "Start-Sleep 8; Start-Process '$env:ProgramFiles\SteelSeries\GG\SteelSeriesGG.exe' -ArgumentList '-dataPath=\`"C:\ProgramData\SteelSeries\GG\`"','-dbEnv=production'")
+            }
             & (Join-Path $PSScriptRoot 'capture.ps1') -Name $name -Seconds $seconds
             "ok capture $name" | Set-Content $result
         }
@@ -49,7 +59,10 @@ try {
             "ok stop-gg" | Set-Content $result
         }
         'start-gg' {
-            Start-Process "$env:ProgramFiles\SteelSeries\GG\SteelSeriesGG.exe"
+            # The same arguments GG's own Start menu shortcut uses; without
+            # them it exits at once.
+            Start-Process "$env:ProgramFiles\SteelSeries\GG\SteelSeriesGG.exe" -ArgumentList @(
+                '-dataPath="C:\ProgramData\SteelSeries\GG"', '-dbEnv=production')
             "ok start-gg" | Set-Content $result
         }
         'remove-task' {

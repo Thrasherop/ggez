@@ -105,25 +105,32 @@ mod imp {
             .context("HOME is not set")
     }
 
+    /// Where this platform keeps the login item.
     #[cfg(target_os = "macos")]
-    fn entry() -> Result<(PathBuf, fn(&Launch) -> String)> {
-        Ok((
-            home()?.join("Library/LaunchAgents/io.github.thrasherop.ggez.plist"),
-            launch_agent,
-        ))
+    fn entry_path() -> Result<PathBuf> {
+        Ok(home()?.join("Library/LaunchAgents/io.github.thrasherop.ggez.plist"))
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn entry() -> Result<(PathBuf, fn(&Launch) -> String)> {
+    fn entry_path() -> Result<PathBuf> {
         let config = match std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
             Some(dir) => PathBuf::from(dir),
             None => home()?.join(".config"),
         };
-        Ok((config.join("autostart/ggez.desktop"), desktop_entry))
+        Ok(config.join("autostart/ggez.desktop"))
+    }
+
+    /// The contents of this platform's login item.
+    fn render(launch: &Launch) -> String {
+        if cfg!(target_os = "macos") {
+            launch_agent(launch)
+        } else {
+            desktop_entry(launch)
+        }
     }
 
     pub fn enable(launch: &Launch) -> Result<()> {
-        let (path, render) = entry()?;
+        let path = entry_path()?;
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;
         }
@@ -132,7 +139,7 @@ mod imp {
     }
 
     pub fn disable() -> Result<()> {
-        let (path, _) = entry()?;
+        let path = entry_path()?;
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -141,13 +148,13 @@ mod imp {
     }
 
     pub fn location() -> Result<Option<String>> {
-        let (path, _) = entry()?;
+        let path = entry_path()?;
         Ok(path.exists().then(|| path.display().to_string()))
     }
 }
 
 /// A macOS LaunchAgent that starts the helper at login.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg_attr(windows, allow(dead_code))]
 fn launch_agent(launch: &Launch) -> String {
     let escape = |s: &str| {
         s.replace('&', "&amp;")
@@ -180,7 +187,7 @@ fn launch_agent(launch: &Launch) -> String {
 }
 
 /// A freedesktop.org autostart entry that starts the helper at login.
-#[cfg_attr(any(windows, target_os = "macos"), allow(dead_code))]
+#[cfg_attr(windows, allow(dead_code))]
 fn desktop_entry(launch: &Launch) -> String {
     // Exec values quote arguments with double quotes and backslash-escape
     // the characters that are special inside them.
