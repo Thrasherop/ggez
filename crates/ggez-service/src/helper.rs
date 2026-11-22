@@ -96,6 +96,11 @@ impl Helper {
         let online = match mouse.is_online() {
             Ok(online) => online,
             Err(e) => {
+                // Most likely unplugged. Count it as gone so that it is set
+                // up again when it comes back.
+                if std::mem::take(&mut self.online) {
+                    events.push(Event::Disconnected);
+                }
                 events.push(Event::Failed(e.to_string()));
                 return events;
             }
@@ -172,14 +177,21 @@ impl InstanceLock {
 /// helper does, for logging.
 pub fn run(profile_path: &Path, stop: Arc<AtomicBool>, mut on_event: impl FnMut(&Event)) {
     let mut helper = Helper::new(profile_path.to_path_buf());
+    let mut mouse = None;
     while !stop.load(Ordering::Relaxed) {
-        // Open the device afresh each pass: it is cheap, and it copes with
-        // the dongle or cable being unplugged and replugged.
-        let mut mouse = Aerox9::open().ok();
+        // Looking for the device means listing every HID device on the
+        // machine, so keep it open while it is reachable.
+        if mouse.is_none() {
+            mouse = Aerox9::open().ok();
+        }
         for event in helper.tick(mouse.as_mut()) {
             on_event(&event);
         }
-        drop(mouse);
+        // Unreachable: it may have been unplugged, or a cable may have
+        // replaced the dongle. Look again next time.
+        if !helper.online {
+            mouse = None;
+        }
         std::thread::sleep(POLL_INTERVAL);
     }
 }
@@ -192,12 +204,17 @@ mod tests {
     /// A dongle whose link state the test controls. Acknowledges everything.
     struct FakeDongle {
         linked: bool,
+        /// Every write fails, as when the device has been unplugged.
+        unplugged: bool,
         written: Vec<Vec<u8>>,
         replies: std::collections::VecDeque<Vec<u8>>,
     }
 
     impl Transport for FakeDongle {
         fn write(&mut self, packet: &[u8]) -> std::result::Result<(), ggez_core::TransportError> {
+            if self.unplugged {
+                return Err(ggez_core::TransportError::Hid("device is gone".into()));
+            }
             self.written.push(packet.to_vec());
             let command = packet[1];
             self.replies.push_back(if command == 0xBC {
@@ -226,6 +243,7 @@ mod tests {
     fn dongle(linked: bool) -> Aerox9<FakeDongle> {
         let t = FakeDongle {
             linked,
+            unplugged: false,
             written: Vec::new(),
             replies: Default::default(),
         };
@@ -343,6 +361,31 @@ mod tests {
         let mut mouse = dongle(true);
         assert!(helper.tick(Some(&mut mouse)).is_empty());
         assert!(sent(&mut mouse).is_empty());
+    }
+
+    #[test]
+    fn unplugging_is_noticed_and_replugging_restores_colors() {
+        let mut helper = Helper::new(profile_file("unplug", COLORS));
+        let mut mouse = dongle(true);
+        helper.tick(Some(&mut mouse));
+
+        let t = FakeDongle {
+            linked: true,
+            unplugged: true,
+            written: Vec::new(),
+            replies: Default::default(),
+        };
+        let mut gone = Aerox9::new(t, Link::Wireless);
+        let events = helper.tick(Some(&mut gone));
+        assert!(
+            matches!(events.as_slice(), [Event::Disconnected, Event::Failed(_)]),
+            "{events:?}"
+        );
+        assert!(!helper.online);
+
+        let mut back = dongle(true);
+        assert_eq!(helper.tick(Some(&mut back)), [Event::Reconnected]);
+        assert_eq!(sent(&mut back), [0x61, 0x61, 0x61]);
     }
 
     #[test]

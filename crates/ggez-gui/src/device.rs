@@ -9,6 +9,9 @@ use ggez_service::Profile;
 
 /// How often the status shown in the sidebar is refreshed.
 const REFRESH_EVERY: Duration = Duration::from_secs(5);
+/// Looking for SteelSeries GG means starting another program, so do it less
+/// often than the status refresh.
+const GG_CHECK_EVERY: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Request {
@@ -81,6 +84,7 @@ impl Device for Worker {
 
 fn run(requests: Receiver<Request>, replies: Sender<Reply>, wake: impl Fn()) {
     let mut firmware: Option<String> = None;
+    let mut gg_checked: Option<std::time::Instant> = None;
     let mut next = Some(Request::Refresh);
     loop {
         let request = match next.take() {
@@ -113,9 +117,12 @@ fn run(requests: Receiver<Request>, replies: Sender<Reply>, wake: impl Fn()) {
 
         let reply = match request {
             Request::Refresh => {
-                let gg = Reply::GgRunning(ggez_service::gg::is_running());
-                if replies.send(gg).is_err() {
-                    return;
+                if gg_checked.is_none_or(|at| at.elapsed() >= GG_CHECK_EVERY) {
+                    gg_checked = Some(std::time::Instant::now());
+                    let gg = Reply::GgRunning(ggez_service::gg::is_running());
+                    if replies.send(gg).is_err() {
+                        return;
+                    }
                 }
                 Reply::Status(status(&mut firmware))
             }

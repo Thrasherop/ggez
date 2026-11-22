@@ -145,10 +145,16 @@ impl<T: Transport> Aerox9<T> {
     }
 
     /// Whether the mouse can be reached right now. Over the dongle this asks
-    /// for the radio link state; a cabled mouse is always reachable.
+    /// for the radio link state, which the dongle answers without waking the
+    /// mouse. A cabled mouse is asked for its battery level: any answer
+    /// means it is there.
     pub fn is_online(&mut self) -> Result<bool> {
         if self.link == Link::Wired {
-            return Ok(true);
+            return match self.request(protocol::battery_query(self.link)) {
+                Ok(_) => Ok(true),
+                Err(Error::NoAck(_)) => Ok(false),
+                Err(e) => Err(e),
+            };
         }
         let reply = self.request(protocol::link_status_query())?;
         Ok(reply.get(1) == Some(&1))
