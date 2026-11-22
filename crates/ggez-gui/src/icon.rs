@@ -53,3 +53,32 @@ fn color_at(x: f32, y: f32) -> Option<[f32; 3]> {
         [20.0, 23.0, 29.0]
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pixel(pixels: &[u8], size: usize, x: usize, y: usize) -> [u8; 4] {
+        let i = (y * size + x) * 4;
+        [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]]
+    }
+
+    #[test]
+    fn has_clear_corners_a_dark_face_and_a_teal_ring() {
+        for size in [16, 32, 64, 128] {
+            let pixels = rgba(size);
+            assert_eq!(pixels.len(), size * size * 4);
+            assert_eq!(pixel(&pixels, size, 0, 0)[3], 0, "corner at {size}");
+            let centre = pixel(&pixels, size, size / 2, size / 2);
+            // At small sizes the dot blends a little with the face around it.
+            assert!(
+                centre[3] == 255 && centre[1] > 180 && centre[0] < 80,
+                "dot at {size}: {centre:?}"
+            );
+            // Three quarters of the way out along the middle row: the ring.
+            let ring = pixel(&pixels, size, size / 2 + size / 4, size / 2);
+            assert_eq!(ring[3], 255);
+            assert!(ring[1] > 150, "ring at {size}: {ring:?}");
+        }
+    }
+}

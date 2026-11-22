@@ -70,6 +70,23 @@ impl Body {
         points
     }
 
+    /// One side of the body between two heights: bounded by the outline on
+    /// the outside and, on the inside, by a straight line `gap` away from
+    /// the centre. `side` is -1 for the left half and 1 for the right.
+    fn half(&self, y0: f32, y1: f32, side: f32, gap: f32) -> Vec<Pos2> {
+        const STEPS: usize = 40;
+        let mut points: Vec<Pos2> = (0..=STEPS)
+            .map(|i| egui::lerp(y0..=y1, i as f32 / STEPS as f32))
+            .filter(|&y| self.half_width_at(y) > gap)
+            .map(|y| pos2(self.center.x + side * self.half_width_at(y), y))
+            .collect();
+        if let Some(first) = points.first().copied() {
+            points.push(pos2(self.center.x + side * gap, y1));
+            points.push(pos2(self.center.x + side * gap, first.y));
+        }
+        points
+    }
+
     /// The perforations in the shell between two heights: staggered rows
     /// of holes.
     fn holes(&self, y0: f32, y1: f32, spacing: f32) -> Vec<Pos2> {
@@ -228,11 +245,8 @@ pub fn buttons(
 
     // Left and right buttons: the front of the shell, either side of the
     // centre line. Drawn first so the smaller controls on top win clicks.
-    for (button, left, right, name) in [
-        (Button::Left, -1.0, -0.03, "Left"),
-        (Button::Right, 0.03, 1.0, "Right"),
-    ] {
-        let shape = body.slice(body.top() + 2.0, split, left, right);
+    for (button, side, name) in [(Button::Left, -1.0, "Left"), (Button::Right, 1.0, "Right")] {
+        let shape = body.half(body.top() + 2.0, split, side, 2.0);
         let (is_selected, hovered) = control(ui, button, Rect::from_points(&shape));
         if is_selected || hovered {
             fill(ui, shape.clone(), shade(is_selected, hovered));
@@ -240,7 +254,6 @@ pub fn buttons(
         if is_selected {
             outline(ui, shape, Stroke::new(1.5, ACCENT));
         }
-        let side = if left < 0.0 { -1.0 } else { 1.0 };
         ui.painter().text(
             pos2(cx + side * 66.0, split - 16.0),
             Align2::CENTER_CENTER,
@@ -466,4 +479,97 @@ pub fn lighting(ui: &mut Ui, lights: &Lights) {
         }
     }
     outline(ui, body.outline(), Stroke::new(1.5, SHELL_EDGE));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body() -> Body {
+        Body {
+            center: pos2(300.0, 200.0),
+            half_width: 98.0,
+            front: 176.0,
+            back: 176.0,
+        }
+    }
+
+    /// The painter fills these shapes as convex polygons; a dent would
+    /// show up as a stray triangle of the wrong color.
+    fn is_convex(points: &[Pos2]) -> bool {
+        let n = points.len();
+        let mut sign = 0.0f32;
+        for i in 0..n {
+            let (a, b, c) = (points[i], points[(i + 1) % n], points[(i + 2) % n]);
+            let cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+            // Ignore nearly straight runs; rounding decides their sign.
+            if cross.abs() > 0.05 {
+                if sign != 0.0 && sign.signum() != cross.signum() {
+                    return false;
+                }
+                sign = cross;
+            }
+        }
+        true
+    }
+
+    #[test]
+    fn every_filled_shape_is_convex() {
+        let body = body();
+        let split = body.top() + 172.0;
+        assert!(is_convex(&body.outline()), "the shell");
+        assert!(
+            is_convex(&body.half(body.top() + 2.0, split, -1.0, 2.0)),
+            "left button"
+        );
+        assert!(
+            is_convex(&body.half(body.top() + 2.0, split, 1.0, 2.0)),
+            "right button"
+        );
+        let height = body.bottom() - body.top();
+        for (start, end) in ZONE_BANDS {
+            let band = body.slice(
+                body.top() + start * height,
+                body.top() + end * height,
+                -0.94,
+                0.94,
+            );
+            assert!(is_convex(&band), "zone {start}-{end}");
+        }
+    }
+
+    #[test]
+    fn the_shell_is_widest_in_the_middle_and_closed_at_the_ends() {
+        let body = body();
+        assert!((body.half_width_at(body.center.y) - body.half_width).abs() < 0.01);
+        assert!(body.half_width_at(body.top()) < 0.5);
+        assert!(body.half_width_at(body.bottom()) < 0.5);
+        // Squarer at the front than the back, as the real mouse is.
+        let near = 150.0;
+        assert!(
+            body.half_width_at(body.center.y - near) > body.half_width_at(body.center.y + near)
+        );
+    }
+
+    #[test]
+    fn holes_stay_inside_the_shell() {
+        let body = body();
+        let holes = body.holes(body.center.y, body.bottom() - 34.0, 13.0);
+        assert!(holes.len() > 50);
+        for hole in holes {
+            let margin = body.half_width_at(hole.y) - (hole.x - body.center.x).abs();
+            assert!(
+                margin >= 13.0,
+                "a hole at {hole:?} is too close to the edge"
+            );
+        }
+    }
+
+    #[test]
+    fn zones_are_in_order_and_do_not_overlap() {
+        for pair in ZONE_BANDS.windows(2) {
+            assert!(pair[0].1 < pair[1].0);
+        }
+        assert!(ZONE_BANDS[0].0 > 0.0 && ZONE_BANDS[2].1 < 1.0);
+    }
 }
