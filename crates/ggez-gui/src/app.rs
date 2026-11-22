@@ -81,6 +81,10 @@ pub struct App {
     confirm_reset: bool,
     live_preview: bool,
     profile_path: Option<PathBuf>,
+    /// When the profile file was last written, as far as the window knows.
+    /// A different time means something else changed it: the icon's menu,
+    /// the command line, or an editor.
+    profile_stamp: Option<std::time::SystemTime>,
     /// Saved, named profiles; `None` if there is nowhere to keep them.
     store: Option<Store>,
     profile_names: Vec<String>,
@@ -124,6 +128,7 @@ impl App {
         let profile_names = store.as_ref().map(Store::list).unwrap_or_default();
         let current_profile = store.as_ref().and_then(Store::current);
         let selected_button = Button::Grid(1);
+        let profile_stamp = profile_path.as_deref().and_then(modified);
         Self {
             tab: Tab::Sensitivity,
             action_text: draft.buttons.get(selected_button).to_string(),
@@ -143,6 +148,7 @@ impl App {
             confirm_reset: false,
             live_preview: true,
             profile_path,
+            profile_stamp,
             store,
             profile_names,
             current_profile,
@@ -153,6 +159,41 @@ impl App {
             device,
             host,
         }
+    }
+
+    /// If the profile file was changed by something other than this window,
+    /// show what it now holds. Edits in progress here are never thrown
+    /// away for it.
+    fn follow_outside_changes(&mut self) {
+        let Some(path) = self.profile_path.clone() else {
+            return;
+        };
+        let stamp = modified(&path);
+        if stamp == self.profile_stamp {
+            return;
+        }
+        self.profile_stamp = stamp;
+        if let Some(store) = &self.store {
+            self.profile_names = store.list();
+            self.current_profile = store.current();
+        }
+        if self.is_dirty() || self.applying {
+            return;
+        }
+        let Ok(profile) = Profile::load(&path) else {
+            return;
+        };
+        let draft = Draft::from_profile(&profile);
+        if draft == self.applied {
+            return;
+        }
+        self.applied = draft.clone();
+        self.seen = draft.clone();
+        self.draft = draft;
+        self.first_run = false;
+        self.select_button(self.selected_button);
+        self.notice =
+            Notice::Good("Your settings were changed outside this window. Showing them.".into());
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -166,7 +207,10 @@ impl App {
     fn handle_replies(&mut self) {
         for reply in self.device.poll() {
             match reply {
-                Reply::Status(status) => self.status = status,
+                Reply::Status(status) => {
+                    self.status = status;
+                    self.follow_outside_changes();
+                }
                 Reply::GgRunning(running) => self.gg_running = running,
                 Reply::Applied(Ok(())) => {
                     self.applying = false;
@@ -204,6 +248,7 @@ impl App {
             self.notice = Notice::Bad(format!("{e:#}"));
             return;
         }
+        self.profile_stamp = self.profile_path.as_deref().and_then(modified);
         self.applied = self.draft.clone();
         self.first_run = false;
         self.applying = true;
@@ -297,6 +342,11 @@ impl App {
         self.draft.buttons.set(self.selected_button, action);
         self.action_text = action.to_string();
     }
+}
+
+/// When a file was last written, if it exists.
+fn modified(path: &std::path::Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
 mod view;

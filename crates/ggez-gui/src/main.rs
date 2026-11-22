@@ -2,7 +2,9 @@
 //!
 //! `ggez-gui` opens the window. `ggez-gui --background` runs only the
 //! helper that keeps the saved profile applied, with no window; that is
-//! what starts at login.
+//! what starts at login. On Windows the helper shows an icon in the
+//! notification area, and a window that closes while "start at login" is
+//! on hands the helper over to a background process so the icon stays.
 
 // No console window on Windows.
 #![cfg_attr(windows, windows_subsystem = "windows")]
@@ -13,6 +15,12 @@ mod draft;
 mod icon;
 mod mouse_view;
 mod theme;
+// Only Windows has an icon to drive so far; elsewhere this is tested but
+// not yet called.
+#[cfg_attr(not(windows), allow(dead_code))]
+mod tray;
+#[cfg(windows)]
+mod tray_windows;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -20,6 +28,9 @@ use std::sync::Arc;
 
 use eframe::egui;
 use ggez_service::{autostart, helper, paths};
+
+/// The window's title. The notification-area icon finds the window by it.
+const WINDOW_TITLE: &str = "ggez";
 
 struct DesktopHost;
 
@@ -71,6 +82,108 @@ fn run_helper_forever(profile: &Path) {
     helper::run(profile, Arc::new(AtomicBool::new(false)), |_event| {});
 }
 
+/// `ggez-gui --background`: the helper with no window.
+fn run_background(profile: Option<PathBuf>) {
+    // A window that is closing hands the helper over to this process and
+    // needs a moment to let go of it. Only one helper runs per user, so if
+    // the lock stays taken there is nothing to do.
+    let lock = (0..20).find_map(|attempt| {
+        if attempt > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        helper::InstanceLock::acquire().ok().flatten()
+    });
+    let (Some(_lock), Some(profile)) = (lock, profile) else {
+        return;
+    };
+    #[cfg(windows)]
+    run_with_icon(&profile);
+    #[cfg(not(windows))]
+    run_helper_forever(&profile);
+}
+
+/// The helper on its own thread, and on this one the notification-area
+/// icon that shows it is running, until the user chooses Quit.
+#[cfg(windows)]
+fn run_with_icon(profile: &Path) {
+    use ggez_service::profiles::Store;
+    use tray::{Choice, Popup};
+    use tray_windows::{Click, Icon};
+
+    let (sender, events) = std::sync::mpsc::channel();
+    let helper_profile = profile.to_path_buf();
+    std::thread::spawn(move || {
+        helper::run(&helper_profile, Arc::new(AtomicBool::new(false)), |event| {
+            let _ = sender.send(event.clone());
+        });
+    });
+
+    let mut state = tray::Tray::default();
+    let Ok(mut icon) = Icon::new(&state.tooltip()) else {
+        // No icon, but the helper still has its job to do.
+        loop {
+            std::thread::park();
+        }
+    };
+    let store = profile.parent().map(|dir| Store::new(dir.to_path_buf()));
+    while let Some(clicks) = icon.wait(500) {
+        for event in events.try_iter() {
+            if let Some(popup) = state.on_event(&event) {
+                icon.notify(&popup);
+            }
+        }
+        icon.set_tooltip(&state.tooltip());
+        for click in clicks {
+            let choice = match click {
+                Click::Primary => Some(Choice::OpenWindow),
+                Click::Menu => {
+                    let names = store.as_ref().map(Store::list).unwrap_or_default();
+                    let current = store.as_ref().and_then(Store::current);
+                    icon.show_menu(&state.menu(&names, current.as_deref()))
+                }
+            };
+            match choice {
+                Some(Choice::OpenWindow) => open_window(),
+                Some(Choice::UseProfile(name)) => {
+                    // The helper notices the changed file and sends it.
+                    let switched = store
+                        .as_ref()
+                        .map_or(Ok(()), |store| store.activate(&name, profile));
+                    if let Err(e) = switched {
+                        icon.notify(&Popup {
+                            title: format!("Could not switch to {name}"),
+                            text: format!("{e:#}"),
+                            warning: true,
+                        });
+                    }
+                }
+                Some(Choice::Quit) => return,
+                None => {}
+            }
+        }
+    }
+}
+
+/// Show the ggez window: the one already open, or a new one.
+#[cfg(windows)]
+fn open_window() {
+    if tray_windows::bring_to_front(WINDOW_TITLE) {
+        return;
+    }
+    if let Ok(program) = std::env::current_exe() {
+        let _ = std::process::Command::new(program).spawn();
+    }
+}
+
+/// Whether closing the window should leave the helper running behind an
+/// icon: only where there is an icon, and only if the user asked for the
+/// helper to be around by turning on "start at login".
+fn stays_after_close(helper_running_here: bool) -> bool {
+    cfg!(windows)
+        && helper_running_here
+        && autostart::location().is_ok_and(|location| location.is_some())
+}
+
 struct Window(app::App);
 
 impl eframe::App for Window {
@@ -83,14 +196,12 @@ fn main() -> anyhow::Result<()> {
     let profile_path = paths::profile_path().ok();
     let background = std::env::args().any(|arg| arg == "--background");
 
-    // Only one helper per user; whoever holds the lock runs it.
-    let lock = helper::InstanceLock::acquire().ok().flatten();
     if background {
-        if let (Some(_lock), Some(path)) = (&lock, &profile_path) {
-            run_helper_forever(path);
-        }
+        run_background(profile_path);
         return Ok(());
     }
+    // Only one helper per user; whoever holds the lock runs it.
+    let lock = helper::InstanceLock::acquire().ok().flatten();
     let helper_running_here = lock.is_some();
     if let (true, Some(path)) = (helper_running_here, profile_path.clone()) {
         std::thread::spawn(move || run_helper_forever(&path));
@@ -98,7 +209,7 @@ fn main() -> anyhow::Result<()> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("ggez")
+            .with_title(WINDOW_TITLE)
             .with_icon(Arc::new(egui::IconData {
                 rgba: icon::rgba(128),
                 width: 128,
@@ -126,5 +237,12 @@ fn main() -> anyhow::Result<()> {
     .map_err(|e| anyhow::anyhow!("could not open the window: {e}"))?;
     // Keep the lock until the window closes.
     drop(lock);
+    if stays_after_close(helper_running_here) {
+        if let Ok(program) = std::env::current_exe() {
+            let _ = std::process::Command::new(program)
+                .arg("--background")
+                .spawn();
+        }
+    }
     Ok(())
 }

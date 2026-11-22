@@ -92,6 +92,17 @@ impl Store {
         self.exists(name).then(|| name.to_owned())
     }
 
+    /// Make a saved profile the one in use by copying it to `active`, the
+    /// file the helper watches. The helper then sends it to the mouse.
+    pub fn activate(&self, name: &str, active: &Path) -> Result<()> {
+        let profile = self.load(name)?;
+        profile
+            .validate()
+            .with_context(|| format!("the profile {name} is not valid"))?;
+        profile.save(active)?;
+        self.set_current(Some(name))
+    }
+
     pub fn set_current(&self, name: Option<&str>) -> Result<()> {
         let file = self.current_file();
         match name {
@@ -171,6 +182,26 @@ mod tests {
         assert_eq!(store.list(), ["Art", "games"]);
         assert!(store.load("Work").is_err());
         assert!(store.delete("Work").is_err());
+    }
+
+    #[test]
+    fn activating_a_profile_copies_it_to_the_file_the_helper_watches() {
+        let store = store("activate");
+        store.save("Games", &profile(1000)).unwrap();
+        let active = store.config_dir.join("profile.toml");
+        store.activate("Games", &active).unwrap();
+        assert_eq!(Profile::load(&active).unwrap(), profile(1000));
+        assert_eq!(store.current().as_deref(), Some("Games"));
+        // A profile that is missing or broken leaves everything as it was.
+        assert!(store.activate("Nope", &active).is_err());
+        std::fs::write(
+            store.config_dir.join("profiles").join("Bad.toml"),
+            "polling = 7\n",
+        )
+        .unwrap();
+        assert!(store.activate("Bad", &active).is_err());
+        assert_eq!(Profile::load(&active).unwrap(), profile(1000));
+        assert_eq!(store.current().as_deref(), Some("Games"));
     }
 
     #[test]

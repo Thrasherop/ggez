@@ -720,3 +720,29 @@ fn extra_mouse_buttons_can_be_chosen() {
     harness.get_by_label_contains("Windows only passes the first five");
     assert_eq!(view::describe(Action::MouseButton(7)), "Button 7");
 }
+
+#[test]
+fn a_profile_changed_outside_the_window_is_shown() {
+    let (mut harness, fake, profile) = window("outside");
+    assert_eq!(harness.state().draft.polling, 1000);
+    std::fs::write(&profile, "polling = 250\n").unwrap();
+    reply(&fake, Reply::Status(CONNECTED));
+    harness.run_steps(2);
+    assert_eq!(harness.state().draft.polling, 250);
+    assert!(!harness.state().is_dirty(), "nothing is left to apply");
+    assert!(
+        requests(&fake).is_empty(),
+        "the helper sends it, not the window"
+    );
+    harness.get_by_label_contains("changed outside this window");
+}
+
+#[test]
+fn edits_in_progress_survive_a_change_outside_the_window() {
+    let (mut harness, fake, profile) = window("outside-dirty");
+    click(&mut harness, "500 Hz");
+    std::fs::write(&profile, "polling = 250\n").unwrap();
+    reply(&fake, Reply::Status(CONNECTED));
+    harness.run_steps(2);
+    assert_eq!(harness.state().draft.polling, 500);
+}

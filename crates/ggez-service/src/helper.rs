@@ -17,6 +17,9 @@ use crate::profile::Profile;
 
 /// How often to look for the mouse and for profile changes.
 pub const POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// The battery moves slowly, so it is read once in this many passes: every
+/// five minutes.
+const BATTERY_EVERY_PASSES: u32 = 150;
 
 /// What the helper did on one pass, for logs and tests.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +34,8 @@ pub enum Event {
     BadProfile(String),
     /// Talking to the mouse failed; it will be retried on the next pass.
     Failed(String),
+    /// The battery level, when first read and whenever it changes.
+    Battery { percent: u8, charging: bool },
 }
 
 /// Tracks what has already been applied so that each pass does only what
@@ -44,6 +49,10 @@ pub struct Helper {
     /// The loaded profile still has to be applied in full.
     pending_full_apply: bool,
     online: bool,
+    /// The last battery reading reported, while the mouse is reachable.
+    battery: Option<(u8, bool)>,
+    /// Passes since the battery was last read.
+    passes_since_battery: u32,
 }
 
 impl Helper {
@@ -81,6 +90,26 @@ impl Helper {
         }
     }
 
+    /// Read the battery level now and then, and report it when it is new.
+    /// A failed reading is not worth an event: the next one will do.
+    fn read_battery<T: Transport>(&mut self, mouse: &mut Aerox9<T>) -> Option<Event> {
+        let due = self.battery.is_none() || self.passes_since_battery >= BATTERY_EVERY_PASSES;
+        self.passes_since_battery += 1;
+        if !due {
+            return None;
+        }
+        self.passes_since_battery = 0;
+        let reading = mouse.battery().ok().map(|b| (b.percent, b.charging))?;
+        if self.battery == Some(reading) {
+            return None;
+        }
+        self.battery = Some(reading);
+        Some(Event::Battery {
+            percent: reading.0,
+            charging: reading.1,
+        })
+    }
+
     /// One pass with the mouse's current state. `mouse` is `None` when no
     /// supported device is present at all.
     pub fn tick<T: Transport>(&mut self, mouse: Option<&mut Aerox9<T>>) -> Vec<Event> {
@@ -107,11 +136,13 @@ impl Helper {
         };
         let was_online = std::mem::replace(&mut self.online, online);
         if !online {
+            self.battery = None;
             if was_online {
                 events.push(Event::Disconnected);
             }
             return events;
         }
+        events.extend(self.read_battery(mouse));
         let Some(profile) = &self.profile else {
             return events;
         };
@@ -204,6 +235,8 @@ mod tests {
     /// A dongle whose link state the test controls. Acknowledges everything.
     struct FakeDongle {
         linked: bool,
+        /// The raw battery byte the mouse answers with; 0 means no answer.
+        battery: u8,
         /// Every write fails, as when the device has been unplugged.
         unplugged: bool,
         written: Vec<Vec<u8>>,
@@ -219,6 +252,8 @@ mod tests {
             let command = packet[1];
             self.replies.push_back(if command == 0xBC {
                 vec![0xBC, u8::from(self.linked)]
+            } else if command == 0xD2 {
+                vec![0xD2, self.battery]
             } else {
                 vec![command, 0x00]
             });
@@ -243,6 +278,7 @@ mod tests {
     fn dongle(linked: bool) -> Aerox9<FakeDongle> {
         let t = FakeDongle {
             linked,
+            battery: 0,
             unplugged: false,
             written: Vec::new(),
             replies: Default::default(),
@@ -258,7 +294,7 @@ mod tests {
             .written
             .iter()
             .map(|p| p[1])
-            .filter(|&c| c != 0xBC)
+            .filter(|&c| c != 0xBC && c != 0xD2)
             .collect();
         let linked = mouse.transport().linked;
         *mouse = dongle(linked);
@@ -371,6 +407,7 @@ mod tests {
 
         let t = FakeDongle {
             linked: true,
+            battery: 0,
             unplugged: true,
             written: Vec::new(),
             replies: Default::default(),
@@ -386,6 +423,39 @@ mod tests {
         let mut back = dongle(true);
         assert_eq!(helper.tick(Some(&mut back)), [Event::Reconnected]);
         assert_eq!(sent(&mut back), [0x61, 0x61, 0x61]);
+    }
+
+    #[test]
+    fn the_battery_is_reported_when_first_read_and_when_it_changes() {
+        let mut helper = Helper::new(std::env::temp_dir().join("ggez-test-missing/profile.toml"));
+        let mut mouse = dongle(true);
+        // 0x0B is 50%; bit 7 means charging.
+        mouse.transport_mut().battery = 0x0B;
+        assert_eq!(
+            helper.tick(Some(&mut mouse)),
+            [Event::Battery {
+                percent: 50,
+                charging: false
+            }]
+        );
+        // Not asked again straight away, and not reported while unchanged.
+        mouse.transport_mut().battery = 0x8B;
+        assert!(helper.tick(Some(&mut mouse)).is_empty());
+        helper.passes_since_battery = BATTERY_EVERY_PASSES;
+        assert_eq!(
+            helper.tick(Some(&mut mouse)),
+            [Event::Battery {
+                percent: 50,
+                charging: true
+            }]
+        );
+        helper.passes_since_battery = BATTERY_EVERY_PASSES;
+        assert!(helper.tick(Some(&mut mouse)).is_empty());
+
+        // After sleep the level is read again at once.
+        let mut asleep = dongle(false);
+        helper.tick(Some(&mut asleep));
+        assert_eq!(helper.tick(Some(&mut mouse)).len(), 1);
     }
 
     #[test]

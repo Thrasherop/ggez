@@ -64,7 +64,7 @@ unless noted.
 | Reactive color | `26 01 00 R G B`, off `26 00 00 00 00 00` | Flash on click. ☑️ |
 | Rainbow effect | `22 FF` | The built-in color cycle. ☑️ |
 | Power-on lighting | `27 a b` | off `00 00`, reactive `00 01`, rainbow `01 00`, reactive-rainbow `01 01`. ✅ for off and rainbow. Stored by the mouse |
-| Sleep timer | `29` + milliseconds, 3 bytes little-endian | 0-20 minutes; 0 = never ❓. ☑️ |
+| Sleep timer | `29` + milliseconds, 3 bytes little-endian | 0-20 minutes; 0 = never ❓. ✅ at 1 minute: the dongle lost the mouse 60-80 s after it was last touched |
 | Illumination | `23 brightness 01 smart 00` + dim timer in milliseconds, 3 bytes little-endian | Brightness 0-15 (GG's slider sent `00`, `04` and `0F` at its lowest, middle and highest). Smart = 1 turns the lights off while the mouse moves. Dim timer 0-1200 s. The `01` is in everything GG sends; meaning ❓. ☑️ byte-identical to GG; effect not yet watched |
 | High-Efficiency flag | `28 n` | 1 on, 0 off. GG sends it between `23 00 01 01` (lights off) and `2B 03` (125 Hz) for its "High-Efficiency Mode", and the reverse to leave it. What the flag changes by itself is ❓. ☑️ |
 | Button table | `2A part slot…` | See below. ✅ |
@@ -171,6 +171,11 @@ mouse beside the dongle; from 15 feet and two walls away ggez saw no link
 for more than 9 seconds. A command sent in that window is lost, so ggez
 keeps resending the command that follows a polling change for up to 20
 seconds.
+
+Asking the mouse for its battery level neither keeps it awake nor wakes
+it: with a 1 minute sleep timer and a battery query every 15 seconds it
+went to sleep on time, and the queries then got `40 FF`. ✅ Software may
+therefore poll the battery without costing battery.
 
 Replies carry leftovers: a short reply such as `61 00` arrives with bytes
 of an earlier, longer reply after it (`61 00 32 2E 34`, the tail of the

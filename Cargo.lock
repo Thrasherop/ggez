@@ -1410,6 +1410,7 @@ dependencies = [
  "ggez-core",
  "ggez-service",
  "rfd",
+ "windows-sys 0.59.0",
  "winresource",
 ]
 

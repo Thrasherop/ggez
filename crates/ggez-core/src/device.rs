@@ -54,6 +54,10 @@ impl<T: Transport> Aerox9<T> {
         &self.transport
     }
 
+    pub fn transport_mut(&mut self) -> &mut T {
+        &mut self.transport
+    }
+
     /// Discard input reports that queued up before our command. The OS keeps
     /// only a small queue per device, so if stale replies (GG's, typically)
     /// fill it, the reply we are about to wait for gets dropped.

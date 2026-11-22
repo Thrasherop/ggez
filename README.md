@@ -48,6 +48,13 @@ connects or wakes, and does nothing else; it is never involved in movement
 or clicks. Turn on **Settings → Start the helper when I log in**, or run it
 yourself with `ggez daemon`.
 
+On Windows the helper sits behind an icon in the notification area, by the
+clock. Point at it for the battery level; click it to open the window;
+right-click it to switch between your saved profiles or to quit. It tells
+you when the battery is down to 15% and when a charge has finished. With
+"start at login" on, closing the window leaves the icon running. macOS and
+Linux do not have the icon yet; the helper runs there without one.
+
 ## The command line
 
 ```

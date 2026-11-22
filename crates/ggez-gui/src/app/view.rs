@@ -1134,10 +1134,12 @@ impl App {
             }
             hint(
                 ui,
-                if self.helper_running_here {
-                    "The helper is running inside this window for now."
-                } else {
+                if !self.helper_running_here {
                     "The helper is already running in the background."
+                } else if cfg!(windows) && matches!(self.autostart, Ok(true)) {
+                    "The helper is running inside this window. When you close the window it moves to an icon in the notification area, by the clock."
+                } else {
+                    "The helper is running inside this window and stops when you close it."
                 },
             );
         });
