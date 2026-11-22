@@ -1,14 +1,22 @@
-//! Drawings of the mouse: one for choosing a button, one for previewing
-//! the lighting. Both are painted from shapes rather than loaded from image
-//! files, so they stay sharp at any size and can show the user's own colors.
+//! The drawing of the mouse: once for choosing a button, once for
+//! previewing the lighting. It is painted from shapes rather than loaded
+//! from an image file, so it stays sharp at any size and can show the
+//! user's own colors.
 //!
-//! The mouse is lit from the upper left: its shell is brightest there and
-//! falls away towards the lower right, its upper edge catches the light,
-//! and it casts a soft shadow on whatever it rests on.
+//! The shapes follow the real Aerox 9 seen from above. Its outline and the
+//! places of its parts were measured from SteelSeries' own top-down
+//! photograph of the mouse and are kept here as fractions of its length:
+//! two main buttons either side of a channel that holds the wheel, a solid
+//! spine behind the wheel with the CPI button set into it, and around that
+//! a shell cut into a lattice of square openings set on their corners,
+//! which the lights shine through. The thumb buttons are on the left side
+//! and show from above only as a few steps in the edge.
+//!
+//! The mouse is lit from the upper left and casts a soft shadow.
 
 use eframe::egui::{
-    self, pos2, vec2, Align2, Color32, CornerRadius, FontId, Mesh, Pos2, Rect, Sense, Shape,
-    Stroke, StrokeKind, Ui, WidgetInfo, WidgetType,
+    self, pos2, vec2, Color32, CornerRadius, FontId, Mesh, Pos2, Rect, Sense, Shape, Stroke,
+    StrokeKind, Ui, WidgetInfo, WidgetType,
 };
 use ggez_core::{Action, Button, ButtonMap};
 
@@ -16,291 +24,492 @@ use crate::theme::{
     self, ACCENT, EDGE, ON_SELECT, RAISED, RAISED_HOVER, SELECT, TEXT, TEXT_DIM, TEXT_FAINT,
 };
 
-const SHELL_LIGHT: Color32 = Color32::from_rgb(66, 70, 82);
-const SHELL: Color32 = Color32::from_rgb(36, 39, 47);
+const SHELL_LIGHT: Color32 = Color32::from_rgb(70, 74, 86);
+const SHELL: Color32 = Color32::from_rgb(38, 41, 49);
 const SHELL_DARK: Color32 = Color32::from_rgb(19, 21, 26);
 const SHELL_RIM: Color32 = Color32::from_rgb(6, 7, 9);
 const HOLE: Color32 = Color32::from_rgb(6, 7, 9);
+const RUBBER: Color32 = Color32::from_rgb(24, 26, 31);
 
-/// The Aerox 9 seen from above, nose up. Its shell is about twice as long
-/// as it is wide (128.8 mm by 68.2 mm with the thumb shelf), squarer at the
-/// nose than at the back and widest a little behind the middle. The main
-/// buttons are the front half; behind them the shell is an open lattice
-/// that the lights shine through. On the left flank a shelf stands out,
-/// carrying the twelve thumb buttons.
+/// The outline: how far the left and the right edge are from the centre
+/// line at points along the mouse, nose first. Everything is a fraction of
+/// the mouse's length.
+const OUTLINE: [(f32, f32, f32); 35] = [
+    (0.000, 0.052, 0.040),
+    (0.008, 0.089, 0.072),
+    (0.020, 0.117, 0.105),
+    (0.031, 0.140, 0.128),
+    (0.042, 0.159, 0.149),
+    (0.053, 0.177, 0.166),
+    (0.075, 0.208, 0.198),
+    (0.098, 0.229, 0.212),
+    (0.120, 0.243, 0.222),
+    (0.142, 0.250, 0.226),
+    (0.160, 0.252, 0.236),
+    (0.176, 0.253, 0.246),
+    (0.254, 0.251, 0.246),
+    (0.355, 0.252, 0.243),
+    (0.478, 0.254, 0.243),
+    (0.522, 0.258, 0.246),
+    (0.567, 0.262, 0.249),
+    (0.601, 0.268, 0.253),
+    (0.634, 0.271, 0.257),
+    (0.690, 0.269, 0.264),
+    (0.712, 0.270, 0.265),
+    (0.735, 0.268, 0.263),
+    (0.757, 0.261, 0.256),
+    (0.779, 0.256, 0.251),
+    (0.802, 0.250, 0.247),
+    (0.824, 0.243, 0.240),
+    (0.846, 0.233, 0.230),
+    (0.869, 0.221, 0.218),
+    (0.891, 0.205, 0.203),
+    (0.913, 0.187, 0.186),
+    (0.936, 0.168, 0.165),
+    (0.958, 0.145, 0.142),
+    (0.980, 0.116, 0.112),
+    (0.992, 0.092, 0.088),
+    (1.000, 0.052, 0.050),
+];
+
+/// The thumb buttons as they show from above: steps in the left edge, each
+/// from one point along the mouse to another and standing out this far.
+const THUMB_STEPS: [(f32, f32, f32); 3] = [
+    (0.262, 0.336, 0.013),
+    (0.346, 0.416, 0.009),
+    (0.426, 0.492, 0.007),
+];
+
+/// Half the width of the channel between the main buttons.
+const CHANNEL: f32 = 0.042;
+/// Where the wheel is along the mouse, and half its width.
+const WHEEL: (f32, f32) = (0.128, 0.262);
+const WHEEL_HALF: f32 = 0.031;
+/// The solid spine behind the wheel: where it ends, and half its width.
+const SPINE_END: f32 = 0.462;
+const SPINE_HALF: f32 = 0.04;
+/// The CPI button, set into the spine.
+const CPI: (f32, f32) = (0.327, 0.433);
+const CPI_HALF: f32 = 0.025;
+/// The seam behind the main buttons is this far along the mouse at its
+/// edges and dips this much further back at the centre line.
+const SEAM: f32 = 0.352;
+const SEAM_DIP: f32 = 0.03;
+/// The lattice: the distance between openings along a row, and the solid
+/// margin left at the mouse's edge.
+const PITCH: f32 = 0.052;
+const RAIL: f32 = 0.027;
+/// Where the lattice on the back of the main buttons starts, at its
+/// nearest to the nose.
+const BUTTON_LATTICE: f32 = 0.184;
+
+/// Where the three light zones are along the mouse: front, palm, wrist.
+pub const ZONE_BANDS: [(f32, f32); 3] = [(0.2, 0.35), (0.4, 0.66), (0.69, 0.965)];
+
+/// The mouse at some place and size.
 #[derive(Clone, Copy)]
 struct Body {
-    center: Pos2,
-    half_width: f32,
-    front: f32,
-    back: f32,
+    /// The tip of the nose, on the centre line.
+    nose: Pos2,
+    length: f32,
 }
 
 impl Body {
-    fn top(&self) -> f32 {
-        self.center.y - self.front
-    }
-
-    fn bottom(&self) -> f32 {
-        self.center.y + self.back
-    }
-
-    fn height(&self) -> f32 {
-        self.front + self.back
-    }
-
-    /// Half the body's width at height `y`.
-    fn half_width_at(&self, y: f32) -> f32 {
-        // A superellipse: the higher the exponent, the squarer the corner.
-        let (offset, radius, exponent) = if y < self.center.y {
-            (self.center.y - y, self.front, 2.9)
-        } else {
-            (y - self.center.y, self.back, 2.3)
-        };
-        let t = (offset / radius).clamp(0.0, 1.0);
-        self.half_width * (1.0 - t.powf(exponent)).powf(1.0 / exponent)
-    }
-
-    fn outline(&self) -> Vec<Pos2> {
-        self.slice(self.top(), self.bottom(), -1.0, 1.0)
-    }
-
-    /// The part of the body between two heights and between two fractions
-    /// of its width (-1 is the left edge, 1 the right edge).
-    fn slice(&self, y0: f32, y1: f32, left: f32, right: f32) -> Vec<Pos2> {
-        const STEPS: usize = 40;
-        let ys: Vec<f32> = (0..=STEPS)
-            .map(|i| {
-                // Ease towards both ends, where the outline curves fastest.
-                let t = i as f32 / STEPS as f32;
-                let eased = 0.5 - 0.5 * (t * std::f32::consts::PI).cos();
-                egui::lerp(y0..=y1, eased)
-            })
-            .collect();
-        let edge =
-            |fraction: f32, y: f32| pos2(self.center.x + fraction * self.half_width_at(y), y);
-        let mut points: Vec<Pos2> = ys.iter().map(|&y| edge(right, y)).collect();
-        points.extend(ys.iter().rev().map(|&y| edge(left, y)));
-        points.dedup_by(|a, b| a.distance(*b) < 0.5);
-        points
-    }
-
-    /// One side of the body between two heights: bounded by the outline on
-    /// the outside and, on the inside, by a straight line `gap` away from
-    /// the centre. `side` is -1 for the left half and 1 for the right.
-    fn half(&self, y0: f32, y1: f32, side: f32, gap: f32) -> Vec<Pos2> {
-        const STEPS: usize = 40;
-        let mut points: Vec<Pos2> = (0..=STEPS)
-            .map(|i| egui::lerp(y0..=y1, i as f32 / STEPS as f32))
-            .filter(|&y| self.half_width_at(y) > gap)
-            .map(|y| pos2(self.center.x + side * self.half_width_at(y), y))
-            .collect();
-        if let Some(first) = points.first().copied() {
-            points.push(pos2(self.center.x + side * gap, y1));
-            points.push(pos2(self.center.x + side * gap, first.y));
+    /// The mouse `length` long with the middle of its length at `middle`.
+    fn placed(middle: Pos2, length: f32) -> Self {
+        Self {
+            nose: pos2(middle.x, middle.y - length / 2.0),
+            length,
         }
+    }
+
+    /// A length given as a fraction of the mouse's.
+    fn of(&self, fraction: f32) -> f32 {
+        fraction * self.length
+    }
+
+    /// The height on the page of a point some fraction along the mouse.
+    fn y(&self, along: f32) -> f32 {
+        self.nose.y + along * self.length
+    }
+
+    /// How far along the mouse a height on the page is.
+    fn along(&self, y: f32) -> f32 {
+        (y - self.nose.y) / self.length
+    }
+
+    /// A point given by how far across the mouse it is and how far along,
+    /// both as fractions of the length; left of the centre line is negative.
+    fn at(&self, across: f32, along: f32) -> Pos2 {
+        pos2(self.nose.x + self.of(across), self.y(along))
+    }
+
+    /// How far the left and right edges are from the centre line at a
+    /// point along the mouse, as fractions of the length.
+    fn reach(along: f32) -> (f32, f32) {
+        let along = along.clamp(0.0, 1.0);
+        let after = OUTLINE
+            .iter()
+            .position(|(t, _, _)| *t >= along)
+            .unwrap_or(OUTLINE.len() - 1)
+            .max(1);
+        let (t0, l0, r0) = OUTLINE[after - 1];
+        let (t1, l1, r1) = OUTLINE[after];
+        let mix = (along - t0) / (t1 - t0);
+        (l0 + (l1 - l0) * mix, r0 + (r1 - r0) * mix)
+    }
+
+    /// How far one edge is from the centre line: the left edge for a
+    /// negative `side`, the right edge otherwise.
+    fn edge(side: f32, along: f32) -> f32 {
+        let (left, right) = Self::reach(along);
+        if side < 0.0 {
+            left
+        } else {
+            right
+        }
+    }
+
+    fn left(&self, along: f32) -> Pos2 {
+        self.at(-Self::reach(along).0, along)
+    }
+
+    fn right(&self, along: f32) -> Pos2 {
+        self.at(Self::reach(along).1, along)
+    }
+
+    /// The outline, clockwise from the nose.
+    fn outline(&self) -> Vec<Pos2> {
+        let mut points: Vec<Pos2> = OUTLINE.iter().map(|(t, _, _)| self.right(*t)).collect();
+        points.extend(OUTLINE.iter().rev().map(|(t, _, _)| self.left(*t)));
         points
     }
 
-    /// The upper edge of the body, from `depth` below the nose on the left,
-    /// over the nose, to the same height on the right, drawn `inset` inside
-    /// the outline. This is where light catches the shell.
-    fn crown(&self, depth: f32, inset: f32) -> Vec<Pos2> {
-        const STEPS: usize = 30;
-        let low = self.top() + depth;
-        let point = |side: f32, t: f32| {
-            let y = egui::lerp(low..=self.top() + inset, t * t.sqrt());
-            let reach = (self.half_width_at(y - inset * 0.5) - inset).max(0.0);
-            pos2(self.center.x + side * reach, y)
-        };
-        let mut points: Vec<Pos2> = (0..=STEPS)
-            .map(|i| point(-1.0, i as f32 / STEPS as f32))
-            .collect();
-        points.extend(
-            (0..=STEPS)
-                .rev()
-                .map(|i| point(1.0, i as f32 / STEPS as f32)),
-        );
-        points.dedup_by(|a, b| a.distance(*b) < 0.5);
-        points
+    /// How far along the mouse the seam behind the main buttons is, at a
+    /// distance from the centre line.
+    fn seam(across: f32) -> f32 {
+        let edge = Self::edge(across, SEAM);
+        SEAM + SEAM_DIP * (1.0 - (across / edge).powi(2)).max(0.0)
     }
 
-    /// The openings of the lattice between two heights: staggered rows of
-    /// diamonds `spacing` apart, each given by its middle.
-    fn lattice(&self, y0: f32, y1: f32, spacing: f32) -> Vec<Pos2> {
-        let pitch = spacing * LATTICE_PITCH;
-        let tall = pitch - 1.0;
-        let mut openings = Vec::new();
-        let rows = ((y1 - y0) / pitch).floor() as i32;
-        for row in 0..=rows {
-            let y = y0 + row as f32 * pitch;
-            // An opening has to clear the edge at its top and its bottom.
-            let reach = self
-                .half_width_at(y - tall)
-                .min(self.half_width_at(y + tall))
-                - spacing * 0.62;
-            let mut x = if row % 2 == 0 { 0.0 } else { spacing / 2.0 };
-            while x <= reach {
-                openings.push(pos2(self.center.x + x, y));
-                if x > 0.0 {
-                    openings.push(pos2(self.center.x - x, y));
+    /// One main button as rows across it, nose first: each row runs from
+    /// the channel to the mouse's edge. `side` is -1 for the left button
+    /// and 1 for the right.
+    fn main_button(&self, side: f32) -> Vec<(Pos2, Pos2)> {
+        const ROWS: usize = 44;
+        (0..=ROWS)
+            .filter_map(|row| {
+                let along = 0.012 + (SEAM + SEAM_DIP - 0.012) * row as f32 / ROWS as f32;
+                let mut edge = Self::edge(side, along) - 0.006;
+                if along > SEAM {
+                    // Behind the seam's ends only the middle is still button.
+                    let behind = (1.0 - (along - SEAM) / SEAM_DIP).max(0.0).sqrt();
+                    edge = edge.min(Self::edge(side, SEAM) * behind);
                 }
-                x += spacing;
+                let inner = if along < WHEEL.1 { CHANNEL } else { SPINE_HALF } + 0.004;
+                (edge > inner).then(|| (self.at(side * inner, along), self.at(side * edge, along)))
+            })
+            .collect()
+    }
+
+    /// Whether a point is where the shell is cut into lattice.
+    fn is_lattice(across: f32, along: f32) -> bool {
+        let edge = Self::edge(across, along);
+        let off = across.abs();
+        let seam = Self::seam(across);
+        if along > seam + 0.008 {
+            // The palm, all the way to the tail, around the spine.
+            let on_spine = off < SPINE_HALF + 0.005 && along < SPINE_END + 0.008;
+            along < 0.972 && off < edge - RAIL && !on_spine
+        } else {
+            // The back of a main button: a wedge that starts nearer the
+            // nose beside the wheel than at the mouse's edge.
+            let start = BUTTON_LATTICE + 0.3 * (off - 0.055);
+            along > start && along < seam - 0.008 && off > 0.055 && off < edge - 0.034
+        }
+    }
+
+    /// How far an opening of the lattice reaches from its middle to each of
+    /// its corners, as a fraction of the mouse's length.
+    fn opening_reach() -> f32 {
+        PITCH / 2.0 - 0.0038
+    }
+
+    /// The middles of the lattice's openings: rows half a pitch apart, every
+    /// other row shifted by half a pitch, wherever a whole opening fits.
+    fn lattice(&self) -> Vec<Pos2> {
+        let half = PITCH / 2.0;
+        let reach = Self::opening_reach();
+        let mut openings = Vec::new();
+        let rows = ((0.98 - BUTTON_LATTICE) / half) as i32;
+        for row in 0..=rows {
+            let along = BUTTON_LATTICE + row as f32 * half;
+            let shift = if row % 2 == 0 { 0.0 } else { half };
+            for column in -6..=6 {
+                let across = column as f32 * PITCH + shift;
+                let fits = [
+                    (0.0, 0.0),
+                    (reach, 0.0),
+                    (-reach, 0.0),
+                    (0.0, reach),
+                    (0.0, -reach),
+                ]
+                .into_iter()
+                .all(|(dx, dy)| Self::is_lattice(across + dx, along + dy));
+                if fits {
+                    openings.push(self.at(across, along));
+                }
             }
         }
         openings
     }
 
-    /// How far the thumb shelf stands out from the shell's left edge at
-    /// height `y`.
-    fn shelf_reach(&self, y: f32) -> f32 {
-        let along = ((y - self.top()) / self.height() - SHELF.0) / (SHELF.1 - SHELF.0);
-        if !(0.0..=1.0).contains(&along) {
-            return 0.0;
-        }
-        SHELF_DEPTH * self.height() * (along * std::f32::consts::PI).sin().powf(0.8)
+    /// The wheel's place on the page.
+    fn wheel(&self) -> Rect {
+        Rect::from_min_max(self.at(-WHEEL_HALF, WHEEL.0), self.at(WHEEL_HALF, WHEEL.1))
     }
 
-    /// The left edge of the mouse at height `y`, shelf included.
-    fn left_edge(&self, y: f32) -> Pos2 {
-        pos2(
-            self.center.x - self.half_width_at(y) - self.shelf_reach(y),
-            y,
-        )
+    /// The CPI button's place on the page.
+    fn cpi(&self) -> Rect {
+        Rect::from_min_max(self.at(-CPI_HALF, CPI.0), self.at(CPI_HALF, CPI.1))
     }
 
-    /// The thumb shelf: darker than the shell and lower, with grooves
-    /// between its four groups of buttons.
-    fn paint_shelf(&self, ui: &Ui) {
-        const STEPS: usize = 36;
-        let y_at = |step: f32| self.top() + (SHELF.0 + (SHELF.1 - SHELF.0) * step) * self.height();
-        let mut mesh = Mesh::default();
-        let mut outer = Vec::with_capacity(STEPS + 1);
-        for step in 0..=STEPS {
-            let y = y_at(step as f32 / STEPS as f32);
-            let edge = self.left_edge(y);
-            // The inner side is hidden under the shell, which is drawn next.
-            let inner = pos2(self.center.x - self.half_width_at(y) + 10.0, y);
-            mesh.colored_vertex(edge, SHELL_DARK);
-            mesh.colored_vertex(inner, theme::lerp(SHELL_DARK, SHELL, 0.7));
-            outer.push(edge);
-        }
-        for step in 0..STEPS as u32 {
-            let i = step * 2;
-            mesh.add_triangle(i, i + 1, i + 2);
-            mesh.add_triangle(i + 1, i + 3, i + 2);
-        }
+    /// The left edge at a point along the mouse, thumb buttons included.
+    fn thumb_edge(&self, along: f32) -> Pos2 {
+        let step = THUMB_STEPS
+            .iter()
+            .find(|(from, to, _)| (*from..=*to).contains(&along))
+            .map_or(0.0, |(_, _, out)| *out);
+        self.left(along) - vec2(self.of(step), 0.0)
+    }
+
+    /// The whole mouse, apart from its wheel and CPI button and anything a
+    /// page adds on top. With `glow`, the lattice shows each zone's light.
+    fn paint(&self, ui: &Ui, glow: Option<[Color32; 3]>) {
         let painter = ui.painter();
-        painter.add(Shape::mesh(mesh));
-        for groove in [0.27, 0.5, 0.73] {
-            let y = y_at(groove);
-            painter.line_segment(
-                [
-                    self.left_edge(y - 0.012 * self.height()) + vec2(1.5, 0.0),
-                    pos2(self.center.x - self.half_width_at(y), y),
-                ],
-                Stroke::new(1.3, SHELL_RIM),
+
+        // Its shadow on the desk.
+        painter.add(theme::halo(
+            self.at(0.01, 0.55),
+            vec2(self.of(0.4), self.of(0.6)),
+            Color32::from_black_alpha(190),
+        ));
+        // The thumb buttons, which the shell overlaps.
+        for (from, to, out) in THUMB_STEPS {
+            let step = Rect::from_min_max(
+                self.left(from) - vec2(self.of(out), 0.0),
+                self.left(to) + vec2(self.of(0.03), 0.0),
+            );
+            painter.rect_filled(step, CornerRadius::same(3), SHELL_DARK);
+            painter.rect_stroke(
+                step,
+                CornerRadius::same(3),
+                Stroke::new(1.2, SHELL_RIM),
+                StrokeKind::Inside,
             );
         }
-        let lit: Vec<Pos2> = outer
+
+        // The shell, brightest left of the centre line and towards the nose.
+        const ROWS: usize = 80;
+        let mut mesh = Mesh::default();
+        for row in 0..=ROWS {
+            let along = row as f32 / ROWS as f32;
+            let (left, right) = Self::reach(along);
+            let shade = |across: f32| {
+                let side = (across / right.max(left) + 1.0) / 2.0;
+                let dark = (0.55 * along + 0.4 * side).clamp(0.0, 1.0);
+                theme::lerp(SHELL, SHELL_DARK, dark)
+            };
+            let lit = theme::lerp(SHELL_LIGHT, SHELL, (along * 1.15).min(1.0));
+            let columns = [
+                (-left, shade(-left)),
+                (-left * 0.42, lit),
+                (right * 0.4, shade(right * 0.2)),
+                (right, shade(right)),
+            ];
+            for (across, color) in columns {
+                mesh.colored_vertex(self.at(across, along), color);
+            }
+        }
+        for row in 0..ROWS as u32 {
+            for column in 0..3 {
+                let i = row * 4 + column;
+                mesh.add_triangle(i, i + 1, i + 4);
+                mesh.add_triangle(i + 1, i + 5, i + 4);
+            }
+        }
+        painter.add(Shape::mesh(mesh));
+
+        // The light inside, seen as a glow on the shell around each zone.
+        if let Some(colors) = glow {
+            for ((from, to), color) in ZONE_BANDS.into_iter().zip(colors) {
+                let along = (from + to) / 2.0;
+                let (left, right) = Self::reach(along);
+                painter.add(theme::halo(
+                    self.at((right - left) / 2.0, along),
+                    vec2(
+                        self.of((left + right) / 2.0 * 0.9),
+                        self.of((to - from) * 0.62),
+                    ),
+                    color.gamma_multiply(0.2),
+                ));
+            }
+        }
+
+        // The lattice.
+        let reach = self.of(Self::opening_reach());
+        for opening in self.lattice() {
+            let color = glow.map(|colors| zone_color(colors, self.along(opening.y)));
+            paint_opening(ui, opening, reach, color);
+        }
+
+        // The side walls, set a little in from the edge.
+        for side in [-1.0f32, 1.0] {
+            let wall: Vec<Pos2> = (0..=40)
+                .map(|step| {
+                    let along = 0.17 + 0.6 * step as f32 / 40.0;
+                    self.at(side * (Self::edge(side, along) - 0.027), along)
+                })
+                .collect();
+            painter.add(Shape::line(wall, Stroke::new(1.1, SHELL_RIM)));
+        }
+
+        // The channel between the main buttons, and the spine behind it.
+        let channel =
+            Rect::from_min_max(self.at(-CHANNEL, 0.004), self.at(CHANNEL, WHEEL.1 + 0.01));
+        painter.rect_filled(channel, CornerRadius::same(2), HOLE);
+        let spine = Rect::from_min_max(
+            self.at(-SPINE_HALF, WHEEL.1 + 0.004),
+            self.at(SPINE_HALF, SPINE_END),
+        );
+        let end = (self.of(SPINE_HALF) * 0.9) as u8;
+        let round = CornerRadius {
+            nw: 3,
+            ne: 3,
+            sw: end,
+            se: end,
+        };
+        painter.rect_filled(spine, round, theme::lerp(SHELL, SHELL_LIGHT, 0.22));
+        painter.rect_stroke(
+            spine,
+            round,
+            Stroke::new(1.2, SHELL_RIM),
+            StrokeKind::Inside,
+        );
+
+        // The seam behind the main buttons, either side of the spine.
+        for side in [-1.0f32, 1.0] {
+            let edge = Self::edge(side, SEAM);
+            let seam: Vec<Pos2> = (0..=24)
+                .map(|step| {
+                    let across = side * (SPINE_HALF + (edge - SPINE_HALF) * step as f32 / 24.0);
+                    self.at(across, Self::seam(across))
+                })
+                .collect();
+            let lip: Vec<Pos2> = seam.iter().map(|&point| point + vec2(0.0, 1.3)).collect();
+            painter.add(Shape::line(
+                lip,
+                Stroke::new(1.0, Color32::from_white_alpha(20)),
+            ));
+            painter.add(Shape::line(seam, Stroke::new(1.6, SHELL_RIM)));
+        }
+
+        // The mouse's edge: a dark line, with light on its upper left.
+        painter.add(Shape::closed_line(
+            self.outline(),
+            Stroke::new(1.7, SHELL_RIM),
+        ));
+        let lit: Vec<Pos2> = OUTLINE
             .iter()
-            .take(STEPS * 2 / 3)
-            .map(|&point| point + vec2(1.8, 0.6))
+            .filter(|(along, _, _)| (0.02..=0.56).contains(along))
+            .map(|(along, _, _)| self.left(*along) + vec2(2.1, 0.8))
             .collect();
         painter.add(Shape::line(
             lit,
-            Stroke::new(1.0, Color32::from_white_alpha(26)),
+            Stroke::new(1.0, Color32::from_white_alpha(44)),
         ));
-        painter.add(Shape::line(outer, Stroke::new(1.6, SHELL_RIM)));
     }
 
-    /// The shadow the mouse casts, its thumb shelf, and its shell, lit from
-    /// the upper left.
-    fn paint_shell(&self, ui: &Ui) {
+    /// The wheel: a rubber barrel with chevrons cut into it.
+    fn paint_wheel(&self, ui: &Ui) {
         let painter = ui.painter();
-        painter.add(theme::halo(
-            pos2(self.center.x + 2.0, self.top() + self.height() * 0.5 + 20.0),
-            vec2(self.half_width * 1.5, self.height() * 0.6),
-            Color32::from_black_alpha(190),
+        let wheel = self.wheel();
+        let radius = CornerRadius::same((wheel.width() * 0.42) as u8);
+        painter.rect_filled(wheel, radius, RUBBER);
+        painter.add(theme::gradient(
+            Rect::from_min_max(wheel.min, pos2(wheel.center().x, wheel.max.y))
+                .shrink2(vec2(1.5, 4.0)),
+            4.0,
+            Color32::TRANSPARENT,
+            Color32::from_white_alpha(18),
+            theme::Along::Across,
         ));
-        self.paint_shelf(ui);
-        let rim: Vec<(Pos2, Color32)> = self
-            .outline()
-            .into_iter()
-            .map(|point| {
-                let across = (point.x - self.center.x) / self.half_width;
-                let down = (point.y - self.top()) / self.height();
-                let shade = (0.5 * down + 0.25 * (across + 1.0)).clamp(0.0, 1.0);
-                (point, theme::lerp(SHELL, SHELL_DARK, shade))
-            })
-            .collect();
-        let hub = pos2(
-            self.center.x - self.half_width * 0.24,
-            self.center.y - self.front * 0.34,
-        );
-        painter.add(theme::fan((hub, SHELL_LIGHT), &rim));
+        painter.rect_stroke(wheel, radius, Stroke::new(1.0, EDGE), StrokeKind::Inside);
+        let (inset, rise) = (wheel.width() * 0.22, wheel.width() * 0.16);
+        let count = ((wheel.height() - 12.0) / 7.0).floor().max(1.0) as i32;
+        for i in 0..count {
+            let y = wheel.center().y + (i as f32 - (count - 1) as f32 / 2.0) * 7.0;
+            painter.add(Shape::line(
+                vec![
+                    pos2(wheel.left() + inset, y + rise),
+                    pos2(wheel.center().x, y - rise),
+                    pos2(wheel.right() - inset, y + rise),
+                ],
+                Stroke::new(1.4, TEXT_FAINT),
+            ));
+        }
     }
 
-    /// The shell's edge: a dark line that also smooths the outline, and the
-    /// light along its upper edge.
-    fn paint_edge(&self, ui: &Ui) {
-        let painter = ui.painter();
-        painter.add(Shape::closed_line(
-            self.outline(),
-            Stroke::new(1.6, SHELL_RIM),
-        ));
-        painter.add(Shape::line(
-            self.crown(self.front * 0.92, 2.2),
-            Stroke::new(1.1, Color32::from_white_alpha(46)),
-        ));
-    }
-
-    /// A groove in the shell: a dark line with light on its lower lip.
-    fn paint_seam(ui: &Ui, from: Pos2, to: Pos2) {
-        let along = (to - from).normalized();
-        let lip = vec2(-along.y, along.x).abs() * 1.3;
-        ui.painter().line_segment(
-            [from + lip, to + lip],
-            Stroke::new(1.0, Color32::from_white_alpha(22)),
-        );
+    /// The CPI button, a long pill.
+    fn paint_cpi(&self, ui: &Ui, fill: Color32, edge: Color32) {
+        let cpi = self.cpi();
+        let radius = CornerRadius::same((cpi.width() / 2.0) as u8);
+        ui.painter().rect_filled(cpi, radius, fill);
         ui.painter()
-            .line_segment([from, to], Stroke::new(1.6, SHELL_RIM));
-    }
-
-    /// The well between the two main buttons that the wheel sits in.
-    fn paint_well(ui: &Ui, well: Rect) {
-        let painter = ui.painter();
-        painter.rect_filled(well, CornerRadius::same(17), HOLE);
-        painter.rect_stroke(
-            well,
-            CornerRadius::same(17),
-            Stroke::new(1.0, Color32::from_white_alpha(16)),
-            StrokeKind::Outside,
-        );
+            .rect_stroke(cpi, radius, Stroke::new(1.0, edge), StrokeKind::Inside);
     }
 }
 
-/// Where along the mouse's length the thumb shelf starts and ends, and how
-/// far it stands out, all as fractions of that length.
-const SHELF: (f32, f32) = (0.15, 0.8);
-const SHELF_DEPTH: f32 = 0.053;
+/// A shape given as rows across it, filled with one color.
+fn fill_rows(rows: &[(Pos2, Pos2)], color: Color32) -> Shape {
+    let mut mesh = Mesh::default();
+    for (from, to) in rows {
+        mesh.colored_vertex(*from, color);
+        mesh.colored_vertex(*to, color);
+    }
+    for row in 0..rows.len().saturating_sub(1) as u32 {
+        let i = row * 2;
+        mesh.add_triangle(i, i + 1, i + 2);
+        mesh.add_triangle(i + 1, i + 3, i + 2);
+    }
+    Shape::mesh(mesh)
+}
 
-/// The distance between the lattice's rows, as a fraction of the distance
-/// between openings in a row.
-const LATTICE_PITCH: f32 = 0.62;
+/// The edge of a shape given as rows across it.
+fn rows_outline(rows: &[(Pos2, Pos2)]) -> Vec<Pos2> {
+    let mut points: Vec<Pos2> = rows.iter().map(|(_, to)| *to).collect();
+    points.extend(rows.iter().rev().map(|(from, _)| *from));
+    points
+}
 
-/// One opening of the lattice: a diamond around `middle`, dark, with the
-/// light behind it showing in `glow` if there is any.
-fn paint_opening(ui: &Ui, middle: Pos2, spacing: f32, glow: Option<Color32>) {
-    let (wide, tall) = (spacing / 2.0 - 1.3, spacing * LATTICE_PITCH - 1.3);
-    let diamond = |scale: f32, color: Color32| {
+/// One opening of the lattice: a square set on its corner, the corners
+/// rounded off, reaching `reach` from its middle. It is dark, or shows the
+/// light behind it.
+fn paint_opening(ui: &Ui, middle: Pos2, reach: f32, glow: Option<Color32>) {
+    let shape = |reach: f32, color: Color32| {
+        let cut = reach * 0.15;
+        let points = [
+            (-cut, -reach + cut),
+            (cut, -reach + cut),
+            (reach - cut, -cut),
+            (reach - cut, cut),
+            (cut, reach - cut),
+            (-cut, reach - cut),
+            (-reach + cut, cut),
+            (-reach + cut, -cut),
+        ];
         Shape::convex_polygon(
-            vec![
-                middle - vec2(0.0, tall * scale),
-                middle + vec2(wide * scale, 0.0),
-                middle + vec2(0.0, tall * scale),
-                middle - vec2(wide * scale, 0.0),
-            ],
+            points.map(|(x, y)| middle + vec2(x, y)).to_vec(),
             color,
             Stroke::NONE,
         )
@@ -308,91 +517,17 @@ fn paint_opening(ui: &Ui, middle: Pos2, spacing: f32, glow: Option<Color32>) {
     let painter = ui.painter();
     match glow {
         Some(color) => {
-            painter.circle_filled(middle, tall * 1.25, color.gamma_multiply(0.16));
-            painter.add(diamond(1.0, theme::lerp(HOLE, color, 0.82)));
-            painter.add(diamond(0.55, theme::lerp(color, Color32::WHITE, 0.3)));
+            // Brightest in the middle, where the light is nearest.
+            painter.add(shape(reach, theme::lerp(HOLE, color, 0.7)));
+            painter.add(shape(reach * 0.72, color));
         }
         None => {
-            painter.add(diamond(1.0, HOLE));
+            painter.add(shape(reach, HOLE));
         }
     }
 }
 
-/// The wheel: a ribbed barrel, brightest along its middle.
-fn paint_wheel(ui: &Ui, rect: Rect, fill: Color32, edge: Color32, ribs: Color32) {
-    let painter = ui.painter();
-    let radius = (rect.width() / 2.0).min(13.0);
-    painter.add(theme::glow(
-        rect.translate(vec2(0.0, 2.0)),
-        radius,
-        Color32::from_black_alpha(120),
-        6.0,
-    ));
-    let middle = Rect::from_min_max(rect.min, pos2(rect.center().x, rect.max.y));
-    painter.rect_filled(rect, CornerRadius::same(radius as u8), fill);
-    painter.add(theme::gradient(
-        middle.shrink2(vec2(0.0, 3.0)).translate(vec2(2.0, 0.0)),
-        4.0,
-        Color32::TRANSPARENT,
-        Color32::from_white_alpha(24),
-        theme::Along::Across,
-    ));
-    painter.rect_stroke(
-        rect,
-        CornerRadius::same(radius as u8),
-        Stroke::new(1.0, edge),
-        StrokeKind::Inside,
-    );
-    let count = ((rect.height() - 14.0) / 6.5).floor().max(1.0) as i32;
-    for i in 0..count {
-        let y = rect.center().y + (i as f32 - (count - 1) as f32 / 2.0) * 6.5;
-        painter.line_segment(
-            [pos2(rect.left() + 6.0, y), pos2(rect.right() - 6.0, y)],
-            Stroke::new(1.6, ribs),
-        );
-    }
-}
-
-/// The mark drawn on a small control. Painted rather than typed, because
-/// not every font has arrow characters.
-#[derive(Clone, Copy)]
-enum Glyph {
-    /// A triangle pointing along this direction.
-    Arrow(f32, f32),
-    /// The wheel, which is drawn as one.
-    Wheel,
-    Text(&'static str),
-}
-
-impl Glyph {
-    fn paint(self, ui: &Ui, rect: Rect, color: Color32) {
-        let center = rect.center();
-        match self {
-            Glyph::Arrow(dx, dy) => {
-                let (forward, side) = (vec2(dx, dy) * 3.2, vec2(-dy, dx) * 4.2);
-                let points = vec![
-                    center - forward + side,
-                    center + forward,
-                    center - forward - side,
-                ];
-                ui.painter()
-                    .add(Shape::line(points, Stroke::new(1.7, color)));
-            }
-            Glyph::Wheel => {}
-            Glyph::Text(text) => {
-                ui.painter().text(
-                    center,
-                    Align2::CENTER_CENTER,
-                    text,
-                    FontId::new(10.5, theme::strong()),
-                    color,
-                );
-            }
-        }
-    }
-}
-
-/// How a binding reads in the small space of a diagram cell.
+/// How a binding reads in the small space of a key in the grid.
 fn short(action: Action, describe: &dyn Fn(Action) -> String) -> String {
     describe(action).replace(" + ", "+")
 }
@@ -419,8 +554,24 @@ impl Lights {
     }
 }
 
+/// The color of the light at a point some fraction of the way along the
+/// mouse: a zone's own color within the zone, a mix between two zones.
+fn zone_color(lights: [Color32; 3], along: f32) -> Color32 {
+    for (index, (start, end)) in ZONE_BANDS.into_iter().enumerate() {
+        if along <= end {
+            if along >= start || index == 0 {
+                return lights[index];
+            }
+            let before = ZONE_BANDS[index - 1].1;
+            let mix = (along - before) / (start - before);
+            return theme::lerp(lights[index - 1], lights[index], mix);
+        }
+    }
+    lights[2]
+}
+
 /// Where the drawing of the mouse was this frame: its middle and half its
-/// height. The window lights the stage around that spot on the next frame.
+/// length. The window lights the stage around that spot on the next frame.
 pub fn take_focus(ctx: &egui::Context) -> Option<(Pos2, f32)> {
     ctx.data_mut(|data| data.remove_temp(egui::Id::new(FOCUS)))
 }
@@ -428,9 +579,8 @@ pub fn take_focus(ctx: &egui::Context) -> Option<(Pos2, f32)> {
 const FOCUS: &str = "mouse-on-stage";
 
 fn remember_focus(ui: &Ui, body: &Body) {
-    let middle = pos2(body.center.x, body.top() + body.height() / 2.0);
     ui.ctx().data_mut(|data| {
-        data.insert_temp(egui::Id::new(FOCUS), (middle, body.height() / 2.0));
+        data.insert_temp(egui::Id::new(FOCUS), (body.at(0.0, 0.5), body.length / 2.0));
     });
 }
 
@@ -442,23 +592,79 @@ pub struct Place {
     pub scale: f32,
 }
 
-/// A line from a label to the part of the mouse it names.
-fn leader(ui: &Ui, from: Pos2, to: Pos2, lit: bool) {
-    let color = if lit {
-        SELECT
-    } else {
-        Color32::WHITE.gamma_multiply(0.32)
-    };
-    ui.painter()
-        .line_segment([from, to], Stroke::new(1.0, color));
-    ui.painter().circle_filled(to, 2.6, color);
+/// The length of the mouse on the buttons page at its natural size.
+pub const BUTTONS_HEIGHT: f32 = 356.0;
+/// The length of the mouse on the lighting page at its natural size.
+pub const LIGHTING_HEIGHT: f32 = 336.0;
+
+/// A label beside the mouse for one of its controls: where the label is,
+/// and the spot on the mouse it points to.
+struct Callout {
+    button: Button,
+    /// -1 for a label left of the mouse, 1 for one to its right.
+    side: f32,
+    /// Which line the label is on, counting down from the first.
+    line: f32,
+    /// The spot it points to: how far across the mouse and how far along.
+    spot: (f32, f32),
 }
 
-/// The button picker: the mouse, placed and sized by `place`, with the
-/// thumb buttons laid out beside it. Every
-/// rebindable control can be clicked; returns the one that was.
-/// `describe` turns a binding into words and `title` names a button; the
-/// holes in the shell glow faintly in `lights`.
+const CALLOUTS: [Callout; 8] = [
+    Callout {
+        button: Button::Left,
+        side: -1.0,
+        line: 0.0,
+        spot: (-0.15, 0.1),
+    },
+    Callout {
+        button: Button::TiltLeft,
+        side: -1.0,
+        line: 1.0,
+        spot: (-WHEEL_HALF - 0.008, 0.185),
+    },
+    Callout {
+        button: Button::Right,
+        side: 1.0,
+        line: 0.0,
+        spot: (0.15, 0.1),
+    },
+    Callout {
+        button: Button::ScrollUp,
+        side: 1.0,
+        line: 1.0,
+        spot: (0.012, WHEEL.0 + 0.02),
+    },
+    Callout {
+        button: Button::TiltRight,
+        side: 1.0,
+        line: 2.0,
+        spot: (WHEEL_HALF + 0.008, 0.185),
+    },
+    Callout {
+        button: Button::Middle,
+        side: 1.0,
+        line: 3.0,
+        spot: (0.012, 0.204),
+    },
+    Callout {
+        button: Button::ScrollDown,
+        side: 1.0,
+        line: 4.0,
+        spot: (0.012, WHEEL.1 - 0.02),
+    },
+    Callout {
+        button: Button::Dpi,
+        side: 1.0,
+        line: 5.0,
+        spot: (CPI_HALF - 0.006, 0.39),
+    },
+];
+
+/// The button picker: the mouse, placed and sized by `place`, with a label
+/// for each of its controls beside it and the thumb buttons laid out as a
+/// grid. Every rebindable control can be clicked, on the mouse or by its
+/// label; returns the one that was. `describe` turns a binding into words
+/// and `title` names a button; the lattice glows dimly in `lights`.
 pub fn buttons(
     ui: &mut Ui,
     place: Place,
@@ -468,12 +674,13 @@ pub fn buttons(
     describe: &dyn Fn(Action) -> String,
     title: &dyn Fn(Button) -> String,
 ) -> Option<Button> {
-    let Place { center, scale: k } = place;
     let factory = ButtonMap::default();
     let clicked = std::cell::Cell::new(None);
+    let body = Body::placed(place.center, place.scale * BUTTONS_HEIGHT);
+    remember_focus(ui, &body);
 
-    // One control: a hit area that reports whether it is selected and
-    // whether the pointer is over it.
+    // One control on the mouse: a hit area that reports whether it is
+    // selected and whether the pointer is over it.
     let control = |ui: &mut Ui, button: Button, hit: Rect| -> (bool, bool) {
         let response = ui
             .interact(
@@ -486,214 +693,121 @@ pub fn buttons(
         response.widget_info(|| {
             WidgetInfo::selected(WidgetType::Button, true, button == selected, title(button))
         });
-        theme::focus_ring(ui, &response, hit, 8);
+        theme::focus_ring(ui, &response, hit, 6);
         if response.clicked() {
             clicked.set(Some(button));
         }
         (button == selected, response.hovered())
     };
     let changed = |button: Button| map.get(button) != factory.get(button);
-    // A key on the mouse: white when selected.
-    let key = |ui: &Ui, rect: Rect, radius: u8, is_selected: bool, hovered: bool| {
-        if is_selected {
-            ui.painter().add(theme::glow(
-                rect.expand(1.0),
-                f32::from(radius),
-                Color32::WHITE.gamma_multiply(0.3),
-                16.0,
-            ));
-            ui.painter()
-                .add(theme::raised(rect, radius, SELECT, Color32::WHITE));
-        } else {
-            let fill = if hovered { RAISED_HOVER } else { RAISED };
-            ui.painter().add(theme::raised(rect, radius, fill, EDGE));
-        }
-    };
-    let ink = |button: Button, is_selected: bool| {
-        if is_selected {
-            ON_SELECT
-        } else if changed(button) {
-            ACCENT
-        } else {
-            TEXT_DIM
-        }
-    };
 
-    // --- The mouse, seen from above -------------------------------------
-    let body = Body::placed(center, k * 356.0);
-    remember_focus(ui, &body);
-    let cx = body.center.x;
-    let split = body.top() + SPLIT * body.height();
-    body.paint_shell(ui);
-    // The lattice: all of the palm, and the back of the main buttons either
-    // side of the wheel. It glows faintly in the mouse's colors.
-    let spacing = 14.0 * k;
-    let mut openings = body.lattice(split + 36.0 * k, body.bottom() - 24.0 * k, spacing);
-    openings.extend(
-        body.lattice(body.top() + 122.0 * k, split - 12.0 * k, spacing)
-            .into_iter()
-            .filter(|opening| (opening.x - cx).abs() > 56.0 * k),
-    );
-    for opening in openings {
-        let down = (opening.y - body.top()) / body.height();
-        let zone = ZONE_BANDS
-            .iter()
-            .rposition(|(start, _)| down >= *start)
-            .unwrap_or(0);
-        paint_opening(ui, opening, spacing, None);
-        ui.painter()
-            .circle_filled(opening, 2.2 * k, lights[zone].gamma_multiply(0.5));
+    let lit = lights != [Color32::BLACK; 3];
+    let dim = lights.map(|color| theme::lerp(Color32::BLACK, color, 0.5));
+    body.paint(ui, lit.then_some(dim));
+
+    // The main buttons: everything in front of the seam, either side of the
+    // channel. They come first so that the wheel, on top, wins clicks.
+    for (button, side) in [(Button::Left, -1.0), (Button::Right, 1.0)] {
+        let rows = body.main_button(side);
+        let hit = Rect::from_points(&rows_outline(&rows));
+        let (is_selected, hovered) = control(ui, button, hit);
+        if is_selected {
+            ui.painter()
+                .add(fill_rows(&rows, Color32::WHITE.gamma_multiply(0.14)));
+            ui.painter().add(Shape::closed_line(
+                rows_outline(&rows),
+                Stroke::new(1.5, SELECT),
+            ));
+        } else if hovered {
+            ui.painter()
+                .add(fill_rows(&rows, Color32::WHITE.gamma_multiply(0.06)));
+        }
     }
 
-    // Left and right buttons: the front of the shell, either side of the
-    // centre line. Drawn first so the smaller controls on top win clicks.
-    // Each has a label beside the mouse that can be clicked as well.
-    let label_y = body.top() + 100.0 * k;
-    for (button, side) in [(Button::Left, -1.0), (Button::Right, 1.0)] {
-        let shape = body.half(body.top() + 3.0, split - 1.0, side, 2.0);
-        let (is_selected, hovered) = control(ui, button, Rect::from_points(&shape));
-        let anchor = pos2(cx + side * 63.0 * k, label_y);
-        // Clear of the thumb shelf on the left.
-        let edge = cx + side * (body.half_width + SHELF_DEPTH * body.height() + 26.0);
-        let (pressed, over_label) = label(
+    // The wheel: its front third scrolls up, its middle clicks, its back
+    // third scrolls down, and a strip either side of it tilts.
+    body.paint_wheel(ui);
+    let wheel = body.wheel();
+    let third = wheel.height() / 3.0;
+    let slice = |index: f32| {
+        Rect::from_min_size(
+            wheel.left_top() + vec2(0.0, index * third),
+            vec2(wheel.width(), third),
+        )
+    };
+    let strip = body.of(0.03);
+    let parts = [
+        (Button::ScrollUp, slice(0.0)),
+        (Button::Middle, slice(1.0)),
+        (Button::ScrollDown, slice(2.0)),
+        (
+            Button::TiltLeft,
+            Rect::from_min_max(wheel.left_top() - vec2(strip, 0.0), wheel.left_bottom()),
+        ),
+        (
+            Button::TiltRight,
+            Rect::from_min_max(wheel.right_top(), wheel.right_bottom() + vec2(strip, 0.0)),
+        ),
+    ];
+    for (button, part) in parts {
+        let (is_selected, hovered) = control(ui, button, part);
+        let mark = part.shrink(1.5);
+        if is_selected {
+            ui.painter()
+                .rect_filled(mark, CornerRadius::same(4), SELECT.gamma_multiply(0.85));
+        } else if hovered {
+            ui.painter().rect_filled(
+                mark,
+                CornerRadius::same(4),
+                Color32::WHITE.gamma_multiply(0.22),
+            );
+        }
+    }
+    let (cpi_selected, cpi_hovered) = control(ui, Button::Dpi, body.cpi().expand(2.0));
+    let (fill, edge) = match (cpi_selected, cpi_hovered) {
+        (true, _) => (SELECT, Color32::WHITE),
+        (false, true) => (RAISED_HOVER, EDGE),
+        (false, false) => (RUBBER, EDGE),
+    };
+    body.paint_cpi(ui, fill, edge);
+
+    // The labels beside the mouse.
+    let first = body.y(0.06);
+    let spacing = body.of(0.078).max(32.0);
+    for callout in &CALLOUTS {
+        let button = callout.button;
+        let edge = pos2(
+            body.nose.x + callout.side * (body.of(0.285) + 30.0),
+            first + callout.line * spacing,
+        );
+        let ink = if changed(button) { ACCENT } else { TEXT_DIM };
+        let pressed = label(
             ui,
             button,
             &describe(map.get(button)),
-            pos2(edge, label_y),
-            side,
-            anchor,
-            is_selected,
-            ink(button, false),
+            edge,
+            callout.side,
+            body.at(callout.spot.0, callout.spot.1),
+            button == selected,
+            ink,
         );
         if pressed {
             clicked.set(Some(button));
         }
-        // Slices of this shape are convex, which is what the painter needs.
-        if is_selected {
-            ui.painter().add(Shape::convex_polygon(
-                shape.clone(),
-                Color32::WHITE.gamma_multiply(0.13),
-                Stroke::NONE,
-            ));
-            ui.painter()
-                .add(Shape::closed_line(shape, Stroke::new(1.5, SELECT)));
-        } else if hovered || over_label {
-            ui.painter().add(Shape::convex_polygon(
-                shape,
-                Color32::WHITE.gamma_multiply(0.06),
-                Stroke::NONE,
-            ));
-        }
-    }
-    // The seams between the two buttons and the palm.
-    Body::paint_seam(ui, pos2(cx, body.top() + 3.0), pos2(cx, split));
-    let reach = body.half_width_at(split) - 1.0;
-    Body::paint_seam(ui, pos2(cx - reach, split), pos2(cx + reach, split));
-    body.paint_edge(ui);
-
-    // The wheel and what surrounds it, in a well between the buttons.
-    let wheel_y = body.top() + 90.0 * k;
-    let cell = |x: f32, y: f32, w: f32, h: f32| {
-        Rect::from_center_size(pos2(cx + x * k, y), vec2(w * k, h * k))
-    };
-    Body::paint_well(ui, cell(0.0, wheel_y, 94.0, 132.0));
-    let small = |ui: &mut Ui, button: Button, rect: Rect, glyph: Glyph, radius: u8| {
-        let (is_selected, hovered) = control(ui, button, rect.expand(2.0));
-        if matches!(glyph, Glyph::Wheel) {
-            if is_selected {
-                ui.painter().add(theme::glow(
-                    rect.expand(1.0),
-                    13.0,
-                    Color32::WHITE.gamma_multiply(0.3),
-                    16.0,
-                ));
-            }
-            let (fill, edge) = match (is_selected, hovered) {
-                (true, _) => (SELECT, Color32::WHITE),
-                (false, true) => (RAISED_HOVER, EDGE),
-                (false, false) => (RAISED, EDGE),
-            };
-            let ribs = if is_selected {
-                ON_SELECT
-            } else if changed(button) {
-                ACCENT
-            } else {
-                TEXT_FAINT
-            };
-            paint_wheel(ui, rect, fill, edge, ribs);
-        } else {
-            key(ui, rect, radius, is_selected, hovered);
-            glyph.paint(ui, rect, ink(button, is_selected));
-        }
-        is_selected
-    };
-    small(
-        ui,
-        Button::ScrollUp,
-        cell(0.0, wheel_y - 48.0 * k, 32.0, 22.0),
-        Glyph::Arrow(0.0, -1.0),
-        7,
-    );
-    small(
-        ui,
-        Button::Middle,
-        cell(0.0, wheel_y, 26.0, 60.0),
-        Glyph::Wheel,
-        12,
-    );
-    small(
-        ui,
-        Button::ScrollDown,
-        cell(0.0, wheel_y + 48.0 * k, 32.0, 22.0),
-        Glyph::Arrow(0.0, 1.0),
-        7,
-    );
-    small(
-        ui,
-        Button::TiltLeft,
-        cell(-31.0, wheel_y, 24.0, 36.0),
-        Glyph::Arrow(-1.0, 0.0),
-        7,
-    );
-    small(
-        ui,
-        Button::TiltRight,
-        cell(31.0, wheel_y, 24.0, 36.0),
-        Glyph::Arrow(1.0, 0.0),
-        7,
-    );
-    let cpi = cell(0.0, split + 21.0 * k, 46.0, 22.0);
-    let cpi_selected = small(ui, Button::Dpi, cpi, Glyph::Text("CPI"), 7);
-    let (pressed, _) = label(
-        ui,
-        Button::Dpi,
-        &describe(map.get(Button::Dpi)),
-        pos2(
-            cx + body.half_width + SHELF_DEPTH * body.height() + 26.0,
-            cpi.center().y,
-        ),
-        1.0,
-        cpi.right_center() + vec2(5.0, 0.0),
-        cpi_selected,
-        ink(Button::Dpi, false),
-    );
-    if pressed {
-        clicked.set(Some(Button::Dpi));
     }
 
-    // --- The side grid, which sits under the thumb ------------------------
+    // --- The thumb buttons, as a grid beside the mouse --------------------
     let (cell_w, cell_h, gap) = (58.0, 46.0, 6.0);
     let grid = vec2(3.0 * cell_w + 2.0 * gap, 4.0 * cell_h + 3.0 * gap);
-    // The shelf is deepest about here.
-    let flank_y = body.top() + (SHELF.0 + SHELF.1) / 2.0 * body.height();
+    // The middle of the steps in the mouse's left edge.
+    let thumb = (THUMB_STEPS[0].0 + THUMB_STEPS[2].1) / 2.0;
+    let flank = body.thumb_edge(thumb) + vec2(4.0, 0.0);
     let grid_min = pos2(
-        body.left_edge(flank_y).x - 86.0 - grid.x,
-        (flank_y - grid.y / 2.0).max(label_y + 58.0),
+        body.nose.x - body.of(0.285) - 86.0 - grid.x,
+        (flank.y - grid.y / 2.0).max(first + spacing + 52.0),
     );
     let plate = Rect::from_min_size(grid_min, grid).expand(10.0);
-    // A line from the grid to the thumb shelf, where its buttons are.
-    let flank = body.left_edge(flank_y) + vec2(5.0, 0.0);
-    let level = flank_y.clamp(plate.top() + 14.0, plate.bottom() - 14.0);
+    let level = flank.y.clamp(plate.top() + 14.0, plate.bottom() - 14.0);
     ui.painter().add(Shape::line(
         vec![
             pos2(plate.right(), level),
@@ -717,7 +831,7 @@ pub fn buttons(
     );
     ui.painter().text(
         plate.left_top() + vec2(4.0, -14.0),
-        Align2::LEFT_CENTER,
+        egui::Align2::LEFT_CENTER,
         "Side buttons",
         FontId::new(11.5, theme::strong()),
         TEXT_FAINT,
@@ -730,10 +844,22 @@ pub fn buttons(
         );
         let button = Button::Grid(n);
         let (is_selected, hovered) = control(ui, button, rect);
-        key(ui, rect, 10, is_selected, hovered);
+        if is_selected {
+            ui.painter().add(theme::glow(
+                rect.expand(1.0),
+                10.0,
+                Color32::WHITE.gamma_multiply(0.3),
+                16.0,
+            ));
+            ui.painter()
+                .add(theme::raised(rect, 10, SELECT, Color32::WHITE));
+        } else {
+            let fill = if hovered { RAISED_HOVER } else { RAISED };
+            ui.painter().add(theme::raised(rect, 10, fill, EDGE));
+        }
         ui.painter().text(
             rect.left_top() + vec2(7.0, 5.0),
-            Align2::LEFT_TOP,
+            egui::Align2::LEFT_TOP,
             n.to_string(),
             FontId::proportional(10.5),
             if is_selected {
@@ -769,11 +895,11 @@ pub fn buttons(
     clicked.get()
 }
 
-/// A label beside the mouse for one of its buttons, joined to it by a
-/// line. It starts at `edge` and grows away from the mouse (`side` is -1
-/// on the left, 1 on the right). Clicking it selects the button, like
-/// clicking the button itself; returns whether it was clicked and whether
-/// the pointer is over it.
+/// A label beside the mouse for one of its controls, joined by a line to
+/// `spot` on the mouse. It starts at `edge` and grows away from the mouse
+/// (`side` is -1 on the left, 1 on the right). Clicking it selects the
+/// control, like clicking the control itself; returns whether it was
+/// clicked.
 #[allow(clippy::too_many_arguments)]
 fn label(
     ui: &mut Ui,
@@ -781,20 +907,20 @@ fn label(
     text: &str,
     edge: Pos2,
     side: f32,
-    anchor: Pos2,
+    spot: Pos2,
     selected: bool,
     ink: Color32,
-) -> (bool, bool) {
+) -> bool {
     let width = (ui
         .painter()
         .layout_no_wrap(text.to_owned(), FontId::new(12.5, theme::strong()), ink)
         .size()
         .x
         + 26.0)
-        .min(150.0);
-    let rect = Rect::from_center_size(edge + vec2(side * width / 2.0, 0.0), vec2(width, 28.0));
-    // The button itself is what assistive technology sees; this is a second
-    // way for the pointer to reach it.
+        .min(132.0);
+    let rect = Rect::from_center_size(edge + vec2(side * width / 2.0, 0.0), vec2(width, 26.0));
+    // The control on the mouse is what assistive technology sees; this is a
+    // second, larger way for the pointer to reach it.
     let response = ui
         .interact(
             rect,
@@ -802,140 +928,47 @@ fn label(
             Sense::click(),
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
-    leader(ui, edge, anchor, selected);
-    theme::tag(ui.painter(), rect, text, selected, response.hovered(), ink);
-    (response.clicked(), response.hovered())
-}
-
-/// Where the three zones sit in the preview, as fractions of its height:
-/// front, palm, wrist.
-pub const ZONE_BANDS: [(f32, f32); 3] = [(0.25, 0.47), (0.5, 0.71), (0.735, 0.945)];
-
-/// The color of the light at a point some fraction of the way down the
-/// mouse: a zone's own color within the zone, a mix between two zones.
-fn zone_color(lights: [Color32; 3], down: f32) -> Color32 {
-    for (index, (start, end)) in ZONE_BANDS.into_iter().enumerate() {
-        if down <= end {
-            if down >= start || index == 0 {
-                return lights[index];
-            }
-            let before = ZONE_BANDS[index - 1].1;
-            let mix = (down - before) / (start - before);
-            return theme::lerp(lights[index - 1], lights[index], mix);
-        }
-    }
-    lights[2]
-}
-
-/// How far down the mouse its main buttons end and its palm begins.
-const SPLIT: f32 = 0.485;
-
-impl Body {
-    /// The mouse `length` long with the middle of its length at `middle`.
-    fn placed(middle: Pos2, length: f32) -> Self {
-        // Widest 58% of the way back, and without the shelf not quite half
-        // as wide as it is long.
-        let front = 0.58 * length;
-        Self {
-            center: pos2(middle.x, middle.y - length / 2.0 + front),
-            half_width: 0.236 * length,
-            front,
-            back: length - front,
-        }
-    }
-}
-
-/// The height of the lighting preview drawn at its natural size.
-pub const LIGHTING_HEIGHT: f32 = 336.0;
-
-/// The lighting preview: the mouse, placed and sized by `place`,
-/// with its three zones shining through the holes in its shell in
-/// `lights`. Returns a point on the mouse's right flank beside each zone,
-/// for labels to attach to.
-pub fn lighting(ui: &mut Ui, place: Place, lights: [Color32; 3]) -> [Pos2; 3] {
-    let Place { center, scale: k } = place;
-    let body = Body::placed(center, k * LIGHTING_HEIGHT);
-    remember_focus(ui, &body);
-    let lit = lights.iter().any(|&color| color != Color32::BLACK);
-    let band = |(start, end): (f32, f32)| {
-        (
-            body.top() + start * body.height(),
-            body.top() + end * body.height(),
-        )
+    let line = if selected {
+        SELECT
+    } else if response.hovered() {
+        Color32::WHITE.gamma_multiply(0.6)
+    } else {
+        Color32::WHITE.gamma_multiply(0.28)
     };
+    // Level from the label for a short way, then straight to the spot.
+    let turn = pos2(edge.x - side * 14.0, edge.y);
+    ui.painter()
+        .add(Shape::line(vec![edge, turn, spot], Stroke::new(1.0, line)));
+    ui.painter().circle_filled(spot, 2.4, line);
+    theme::tag(ui.painter(), rect, text, selected, response.hovered(), ink);
+    response.clicked()
+}
+
+/// The lighting preview: the mouse, placed and sized by `place`, with its
+/// three zones shining through the lattice in `lights`. Returns a point on
+/// the mouse's right edge beside each zone, for labels to attach to.
+pub fn lighting(ui: &mut Ui, place: Place, lights: [Color32; 3]) -> [Pos2; 3] {
+    let body = Body::placed(place.center, place.scale * LIGHTING_HEIGHT);
+    remember_focus(ui, &body);
+    let lit = lights != [Color32::BLACK; 3];
 
     // Light spilling out from under the shell.
     if lit {
-        for (zone, color) in ZONE_BANDS.into_iter().zip(lights) {
-            let (y0, y1) = band(zone);
-            let middle = (y0 + y1) / 2.0;
+        for ((from, to), color) in ZONE_BANDS.into_iter().zip(lights) {
+            let along = (from + to) / 2.0;
+            let (left, right) = Body::reach(along);
             ui.painter().add(theme::halo(
-                pos2(body.center.x, middle),
-                vec2(body.half_width_at(middle) * 1.5, (y1 - y0) * 0.9),
+                body.at((right - left) / 2.0, along),
+                vec2(body.of((left + right) * 0.78), body.of((to - from) * 0.95)),
                 color.gamma_multiply(0.5),
             ));
         }
     }
-    body.paint_shell(ui);
-    let split = body.top() + SPLIT * body.height();
-    for (zone, color) in ZONE_BANDS.into_iter().zip(lights) {
-        let (y0, y1) = band(zone);
-        if lit {
-            // The glow of the lights on the inside of the shell.
-            let middle = (y0 + y1) / 2.0;
-            ui.painter().add(theme::halo(
-                pos2(body.center.x, middle),
-                vec2(body.half_width_at(middle) * 0.92, (y1 - y0) * 0.62),
-                color.gamma_multiply(0.2),
-            ));
-        }
-    }
-    // The lattice runs unbroken from the back of the main buttons to the
-    // wrist. Between two zones their light mixes.
-    let spacing = 13.0 * k;
-    let (first, last) = (band(ZONE_BANDS[0]).0, band(ZONE_BANDS[2]).1);
-    for opening in body.lattice(first + 8.0 * k, last - 8.0 * k, spacing) {
-        // The strip between the main buttons is solid, and so is the seam
-        // behind them.
-        let in_strip = opening.y < split && (opening.x - body.center.x).abs() < 20.0 * k;
-        let on_seam = (opening.y - split).abs() < spacing * LATTICE_PITCH + 2.0;
-        if in_strip || on_seam {
-            continue;
-        }
-        let color = zone_color(lights, (opening.y - body.top()) / body.height());
-        paint_opening(ui, opening, spacing, lit.then_some(color));
-    }
-    // The seams around the main buttons, the wheel between them, and the
-    // CPI button behind it.
-    Body::paint_seam(
-        ui,
-        pos2(body.center.x, body.top() + 3.0),
-        pos2(body.center.x, split),
-    );
-    let reach = body.half_width_at(split) - 1.0;
-    Body::paint_seam(
-        ui,
-        pos2(body.center.x - reach, split),
-        pos2(body.center.x + reach, split),
-    );
-    let wheel = Rect::from_center_size(
-        pos2(body.center.x, body.top() + 0.19 * body.height()),
-        vec2(22.0 * k, 52.0 * k),
-    );
-    Body::paint_well(ui, wheel.expand2(vec2(8.0, 9.0) * k));
-    paint_wheel(ui, wheel, RAISED, EDGE, TEXT_FAINT);
-    let cpi = Rect::from_center_size(
-        pos2(body.center.x, body.top() + 0.385 * body.height()),
-        vec2(15.0 * k, 26.0 * k),
-    );
-    ui.painter().add(theme::raised(cpi, 6, RAISED, EDGE));
-    body.paint_edge(ui);
+    body.paint(ui, lit.then_some(lights));
+    body.paint_wheel(ui);
+    body.paint_cpi(ui, RUBBER, EDGE);
 
-    ZONE_BANDS.map(|zone| {
-        let (y0, y1) = band(zone);
-        let middle = (y0 + y1) / 2.0;
-        pos2(body.center.x + body.half_width_at(middle), middle)
-    })
+    ZONE_BANDS.map(|(from, to)| body.right((from + to) / 2.0))
 }
 
 #[cfg(test)]
@@ -943,111 +976,125 @@ mod tests {
     use super::*;
 
     fn body() -> Body {
-        Body::placed(pos2(300.0, 200.0), 356.0)
-    }
-
-    /// The painter fills these shapes as convex polygons; a dent would
-    /// show up as a stray triangle of the wrong color.
-    fn is_convex(points: &[Pos2]) -> bool {
-        let n = points.len();
-        let mut sign = 0.0f32;
-        for i in 0..n {
-            let (a, b, c) = (points[i], points[(i + 1) % n], points[(i + 2) % n]);
-            let cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
-            // Ignore nearly straight runs; rounding decides their sign.
-            if cross.abs() > 0.05 {
-                if sign != 0.0 && sign.signum() != cross.signum() {
-                    return false;
-                }
-                sign = cross;
-            }
-        }
-        true
+        Body::placed(pos2(300.0, 200.0), BUTTONS_HEIGHT)
     }
 
     #[test]
-    fn every_filled_shape_is_convex() {
-        let body = body();
-        let split = body.top() + SPLIT * body.height();
-        assert!(is_convex(&body.outline()), "the shell");
-        assert!(
-            is_convex(&body.half(body.top() + 3.0, split - 1.0, -1.0, 2.0)),
-            "left button"
-        );
-        assert!(
-            is_convex(&body.half(body.top() + 3.0, split - 1.0, 1.0, 2.0)),
-            "right button"
-        );
+    fn the_outline_runs_from_nose_to_tail_without_doubling_back() {
+        assert_eq!(OUTLINE[0].0, 0.0);
+        assert_eq!(OUTLINE[OUTLINE.len() - 1].0, 1.0);
+        for pair in OUTLINE.windows(2) {
+            assert!(pair[0].0 < pair[1].0, "{pair:?}");
+        }
+        assert!(OUTLINE
+            .iter()
+            .all(|(_, left, right)| *left > 0.0 && *right > 0.0));
     }
 
     #[test]
     fn the_mouse_has_the_proportions_of_the_real_one() {
         let body = body();
-        assert!((body.height() - 356.0).abs() < 0.01);
-        assert!((body.top() - 22.0).abs() < 0.01, "placed by its middle");
-        // 128.8 mm long and 68.2 mm wide, thumb shelf included.
-        let widest = (0..=356)
+        assert!((body.y(0.0) - 22.0).abs() < 0.01, "placed by its middle");
+        assert!((body.y(1.0) - 378.0).abs() < 0.01);
+        let widest = (0..=200)
             .map(|step| {
-                let y = body.top() + step as f32;
-                body.center.x + body.half_width_at(y) - body.left_edge(y).x
+                let along = step as f32 / 200.0;
+                body.right(along).x - body.thumb_edge(along).x
             })
             .fold(0.0f32, f32::max);
-        let ratio = body.height() / widest;
+        // 128.8 mm long and 68.2 mm wide. The photograph the outline was
+        // measured from looks down on a mouse whose nose and tail curve
+        // away from the camera, so it comes out a few percent short.
+        let ratio = body.length / widest;
         assert!(
-            (ratio - 128.8 / 68.2).abs() < 0.06,
+            (ratio - 128.8 / 68.2).abs() < 0.08,
             "length / width is {ratio}"
         );
+        // Widest near the tail, as the real one is.
+        let (left, right) = Body::reach(0.7);
+        let (front_left, front_right) = Body::reach(0.3);
+        assert!(left > front_left && right > front_right);
     }
 
     #[test]
-    fn the_thumb_shelf_is_on_the_left_flank_only() {
-        let body = body();
-        let at = |fraction: f32| body.shelf_reach(body.top() + fraction * body.height());
-        assert_eq!(at(0.05), 0.0);
-        assert_eq!(at(0.9), 0.0);
-        assert!(at(0.2) > 0.0 && at(0.2) < at(0.45));
-        assert!((at((SHELF.0 + SHELF.1) / 2.0) - SHELF_DEPTH * body.height()).abs() < 0.01);
+    fn edges_between_measured_points_are_interpolated() {
+        let (left, right) = Body::reach(0.3);
+        assert!((0.251..=0.252).contains(&left), "{left}");
+        assert!((0.243..=0.246).contains(&right), "{right}");
+        assert_eq!(Body::reach(-1.0), Body::reach(0.0));
+        assert_eq!(Body::reach(2.0), Body::reach(1.0));
     }
 
     #[test]
-    fn the_shell_is_widest_in_the_middle_and_closed_at_the_ends() {
+    fn the_lattice_stays_inside_the_shell_and_off_the_solid_parts() {
         let body = body();
-        assert!((body.half_width_at(body.center.y) - body.half_width).abs() < 0.01);
-        assert!(body.half_width_at(body.top()) < 0.5);
-        assert!(body.half_width_at(body.bottom()) < 0.5);
-        // Squarer at the front than the back, as the real mouse is.
-        let near = 150.0;
-        assert!(
-            body.half_width_at(body.center.y - near) > body.half_width_at(body.center.y + near)
-        );
+        let openings = body.lattice();
+        assert!(openings.len() > 100, "{} openings", openings.len());
+        let reach = body.of(Body::opening_reach());
+        let (wheel, cpi) = (body.wheel(), body.cpi());
+        for opening in &openings {
+            for (dx, dy) in [(reach, 0.0), (-reach, 0.0), (0.0, reach), (0.0, -reach)] {
+                let corner = *opening + vec2(dx, dy);
+                let along = body.along(corner.y);
+                let (left, right) = (body.left(along).x, body.right(along).x);
+                assert!(
+                    corner.x > left + 3.0 && corner.x < right - 3.0,
+                    "an opening at {opening:?} reaches the edge"
+                );
+                assert!(!wheel.contains(corner) && !cpi.contains(corner));
+            }
+        }
+        // On the back of both main buttons, and all over the palm.
+        let count = |from: f32, to: f32, side: f32| {
+            openings
+                .iter()
+                .filter(|o| {
+                    (from..to).contains(&body.along(o.y)) && (o.x - body.nose.x) * side > 0.0
+                })
+                .count()
+        };
+        assert!(count(BUTTON_LATTICE, SEAM, -1.0) >= 6);
+        assert!(count(BUTTON_LATTICE, SEAM, 1.0) >= 6);
+        assert!(count(0.45, 0.97, -1.0) > 30);
+        assert!(count(0.45, 0.97, 1.0) > 30);
     }
 
     #[test]
-    fn the_lattice_stays_inside_the_shell() {
+    fn the_main_buttons_are_in_front_of_the_seam_and_clear_of_the_wheel() {
         let body = body();
-        let spacing = 14.0;
-        let openings = body.lattice(body.center.y - 20.0, body.bottom() - 24.0, spacing);
-        assert!(openings.len() > 80);
-        let (wide, tall) = (spacing / 2.0 - 1.3, spacing * LATTICE_PITCH - 1.3);
-        for opening in openings {
-            // Each of the diamond's four points, with room for a strut.
-            for (dx, dy) in [(wide, 0.0), (-wide, 0.0), (0.0, tall), (0.0, -tall)] {
-                let (x, y) = (opening.x + dx, opening.y + dy);
-                let margin = body.half_width_at(y) - (x - body.center.x).abs();
-                assert!(margin >= 1.5, "an opening at {opening:?} reaches the edge");
+        let wheel = body.wheel();
+        for side in [-1.0, 1.0] {
+            let rows = body.main_button(side);
+            assert!(rows.len() > 30);
+            for (inner, outer) in rows {
+                assert!((outer.x - inner.x) * side > 0.0, "a row runs outwards");
+                assert!(!wheel.expand(1.0).contains(inner));
+                let along = body.along(outer.y);
+                assert!(along <= SEAM + SEAM_DIP + 0.001);
+                let edge = body.nose.x + side * body.of(Body::edge(side, along));
+                assert!(
+                    (outer.x - edge) * side <= 0.0,
+                    "a row stays inside the outline"
+                );
             }
         }
     }
 
     #[test]
-    fn the_light_on_the_upper_edge_stays_inside_the_shell() {
-        let body = body();
-        let crown = body.crown(body.front * 0.92, 2.2);
-        assert!(crown.len() > 20);
-        for point in crown {
-            let margin = body.half_width_at(point.y) - (point.x - body.center.x).abs();
-            assert!(margin >= 0.0, "the highlight at {point:?} is outside");
-            assert!(point.y >= body.top());
+    fn every_control_but_the_thumb_buttons_has_a_label_that_points_at_the_mouse() {
+        for callout in &CALLOUTS {
+            let (across, along) = callout.spot;
+            let (left, right) = Body::reach(along);
+            assert!(across > -left && across < right, "{:?}", callout.button);
+            assert!((0.0..1.0).contains(&along));
+        }
+        let named: Vec<Button> = CALLOUTS.iter().map(|callout| callout.button).collect();
+        for button in Button::ALL {
+            assert_eq!(
+                named.contains(&button),
+                !matches!(button, Button::Grid(_)),
+                "{button:?}"
+            );
         }
     }
 
@@ -1056,7 +1103,7 @@ mod tests {
         let lights = [Color32::RED, Color32::GREEN, Color32::BLUE];
         assert_eq!(zone_color(lights, 0.0), Color32::RED);
         assert_eq!(zone_color(lights, 0.3), Color32::RED);
-        assert_eq!(zone_color(lights, 0.6), Color32::GREEN);
+        assert_eq!(zone_color(lights, 0.5), Color32::GREEN);
         assert_eq!(zone_color(lights, 0.99), Color32::BLUE);
         let between = zone_color(lights, (ZONE_BANDS[0].1 + ZONE_BANDS[1].0) / 2.0);
         assert!(between.r() > 100 && between.g() > 100 && between.b() == 0);
