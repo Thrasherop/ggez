@@ -6,6 +6,17 @@
 //! always rewrites the whole table, as three 64-byte zero-padded packets
 //! `6a <part> <slots...>` holding 6, 6 and 8 slots.
 //!
+//! Key bindings are performed by the mouse itself and follow the button: the
+//! key goes down on press and up on release, so they can be held. A slot
+//! may name up to four keys, which is how GG stores Ctrl+Shift+K.
+//!
+//! GG's OS shortcuts and macros are not in this table. GG disables the slot
+//! and acts in software, which is why they fire once and need GG running.
+//! It can do that because the ordinary mouse input report (12 bytes on the
+//! dongle) carries the physical state of every button in bytes 7-9, whatever
+//! the binding: side button 1 was seen as bit 0x40 of byte 8 for exactly as
+//! long as it was held.
+//!
 //! The mouse has no known "read bindings" command, so a [`ButtonMap`] starts
 //! from the factory layout and every write replaces all bindings.
 
