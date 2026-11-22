@@ -131,7 +131,8 @@ mod hid {
         let api = HidApi::new()?;
         let mut devices = Vec::new();
         for d in api.device_list() {
-            let supported = d.vendor_id() == VENDOR_ID && Link::from_product_id(d.product_id()).is_some();
+            let supported =
+                d.vendor_id() == VENDOR_ID && Link::from_product_id(d.product_id()).is_some();
             if supported && d.usage_page() >= 0xFF00 {
                 let device = d.open_device(&api)?;
                 device.set_blocking_mode(false)?;

@@ -1,8 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/ggez-core", "crates/ggez-cli"]
+members = ["crates/ggez-core", "crates/ggez-service", "crates/ggez-cli", "crates/ggez-gui"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/Thrasherop/ggez"

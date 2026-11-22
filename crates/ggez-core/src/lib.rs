@@ -14,7 +14,7 @@ mod dpi_table;
 pub mod protocol;
 pub mod transport;
 
-pub use buttons::{Action, Button, ButtonMap};
+pub use buttons::{key_names, media_names, Action, Button, ButtonMap};
 pub use device::Aerox9;
 pub use protocol::{Battery, DefaultLighting, Link, PollingRate, ProtoError, Rgb, Zone};
 pub use transport::{MockTransport, Transport, TransportError};

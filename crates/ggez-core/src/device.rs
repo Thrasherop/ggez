@@ -101,7 +101,9 @@ impl<T: Transport> Aerox9<T> {
                 if left.is_zero() {
                     break;
                 }
-                let n = self.transport.read(&mut buf, left.as_millis().max(1) as i32)?;
+                let n = self
+                    .transport
+                    .read(&mut buf, left.as_millis().max(1) as i32)?;
                 if n == 0 {
                     break;
                 }
@@ -139,6 +141,16 @@ impl<T: Transport> Aerox9<T> {
         Ok(replies)
     }
 
+    /// Whether the mouse can be reached right now. Over the dongle this asks
+    /// for the radio link state; a cabled mouse is always reachable.
+    pub fn is_online(&mut self) -> Result<bool> {
+        if self.link == Link::Wired {
+            return Ok(true);
+        }
+        let reply = self.request(protocol::link_status_query())?;
+        Ok(reply.get(1) == Some(&1))
+    }
+
     /// The mouse's firmware version, e.g. `1.2.4`.
     pub fn firmware_version(&mut self) -> Result<String> {
         let query = protocol::firmware_query(self.link);
@@ -153,7 +165,9 @@ impl<T: Transport> Aerox9<T> {
                 if left.is_zero() {
                     break;
                 }
-                let n = self.transport.read(&mut buf, left.as_millis().max(1) as i32)?;
+                let n = self
+                    .transport
+                    .read(&mut buf, left.as_millis().max(1) as i32)?;
                 if n == 0 {
                     break;
                 }
@@ -256,7 +270,10 @@ mod tests {
         let mut m = Aerox9::new(t, Link::Wireless);
         assert!(matches!(
             m.save(),
-            Err(Error::Rejected { command: 0x51, status: 0xFF })
+            Err(Error::Rejected {
+                command: 0x51,
+                status: 0xFF
+            })
         ));
     }
 
@@ -272,10 +289,22 @@ mod tests {
     fn firmware_version_skips_other_replies() {
         let mut t = MockTransport::new();
         t.responses.push_back(vec![0x61, 0x00, 0x32, 0x2E, 0x34]);
-        t.responses.push_back(vec![0x31, 0x2E, 0x32, 0x2E, 0x34, 0x00, 0x00]);
+        t.responses
+            .push_back(vec![0x31, 0x2E, 0x32, 0x2E, 0x34, 0x00, 0x00]);
         let mut m = Aerox9::new(t, Link::Wireless);
         assert_eq!(m.firmware_version().unwrap(), "1.2.4");
         assert_eq!(m.transport().written[0], vec![0x00, 0xD0]);
+    }
+
+    #[test]
+    fn dongle_reports_link_state() {
+        let mut t = MockTransport::new();
+        t.responses.push_back(vec![0xBC, 0x00]);
+        t.responses.push_back(vec![0xBC, 0x01]);
+        let mut m = Aerox9::new(t, Link::Wireless);
+        assert!(!m.is_online().unwrap());
+        assert!(m.is_online().unwrap());
+        assert_eq!(m.transport().written[0], vec![0x00, 0xBC]);
     }
 
     #[test]

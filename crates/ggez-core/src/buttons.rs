@@ -20,6 +20,7 @@
 //! The mouse has no known "read bindings" command, so a [`ButtonMap`] starts
 //! from the factory layout and every write replaces all bindings.
 
+use std::fmt;
 use std::str::FromStr;
 
 use crate::protocol::{Link, ProtoError};
@@ -196,49 +197,28 @@ fn key_code(name: &str) -> Option<u8> {
             _ => None,
         };
     }
-    Some(match name {
-        "ctrl" => 0xE0,
-        "shift" => 0xE1,
-        "alt" => 0xE2,
-        "win" | "cmd" | "super" => 0xE3,
-        "rctrl" => 0xE4,
-        "rshift" => 0xE5,
-        "ralt" => 0xE6,
-        "rwin" | "rcmd" | "rsuper" => 0xE7,
-        "enter" => 0x28,
-        "escape" | "esc" => 0x29,
-        "backspace" => 0x2A,
-        "tab" => 0x2B,
-        "space" => 0x2C,
-        "minus" => 0x2D,
-        "equals" => 0x2E,
-        "insert" => 0x49,
-        "home" => 0x4A,
-        "page-up" => 0x4B,
-        "delete" => 0x4C,
-        "end" => 0x4D,
-        "page-down" => 0x4E,
-        "right-arrow" => 0x4F,
-        "left-arrow" => 0x50,
-        "down-arrow" => 0x51,
-        "up-arrow" => 0x52,
-        _ => return None,
-    })
+    let name = match name {
+        "esc" => "escape",
+        "cmd" | "super" => "win",
+        "rcmd" | "rsuper" => "rwin",
+        other => other,
+    };
+    NAMED_KEYS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, code)| *code)
 }
 
 /// USB HID consumer usage for a media key name. Only `play-pause` has been
 /// observed in GG's traffic; the rest are the standard codes on that page.
 fn media_code(name: &str) -> Option<u8> {
-    Some(match name {
-        "play-pause" => 0xCD,
-        "next" => 0xB5,
-        "previous" => 0xB6,
-        "stop" => 0xB7,
-        "mute" => 0xE2,
-        "volume-up" => 0xE9,
-        "volume-down" => 0xEA,
-        _ => return None,
-    })
+    if let Some(hex) = name.strip_prefix("0x") {
+        return u8::from_str_radix(hex, 16).ok().filter(|&c| c != 0);
+    }
+    MEDIA_KEYS
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, code)| *code)
 }
 
 /// A complete set of bindings.
@@ -298,6 +278,153 @@ impl ButtonMap {
     }
 }
 
+impl Button {
+    /// Every rebindable control, in the order a user would list them.
+    pub const ALL: [Button; 20] = [
+        Button::Left,
+        Button::Right,
+        Button::Middle,
+        Button::TiltLeft,
+        Button::TiltRight,
+        Button::Dpi,
+        Button::Grid(1),
+        Button::Grid(2),
+        Button::Grid(3),
+        Button::Grid(4),
+        Button::Grid(5),
+        Button::Grid(6),
+        Button::Grid(7),
+        Button::Grid(8),
+        Button::Grid(9),
+        Button::Grid(10),
+        Button::Grid(11),
+        Button::Grid(12),
+        Button::ScrollUp,
+        Button::ScrollDown,
+    ];
+}
+
+/// The name [`Button::from_str`] accepts.
+impl fmt::Display for Button {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Button::Left => f.write_str("left"),
+            Button::Right => f.write_str("right"),
+            Button::Middle => f.write_str("middle"),
+            Button::TiltLeft => f.write_str("tilt-left"),
+            Button::TiltRight => f.write_str("tilt-right"),
+            Button::Dpi => f.write_str("dpi"),
+            Button::Grid(n) => write!(f, "g{n}"),
+            Button::ScrollUp => f.write_str("scroll-up"),
+            Button::ScrollDown => f.write_str("scroll-down"),
+        }
+    }
+}
+
+/// The text [`Action::from_str`] accepts.
+impl fmt::Display for Action {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Action::Disabled => f.write_str("disabled"),
+            Action::MouseButton(1) => f.write_str("left"),
+            Action::MouseButton(2) => f.write_str("right"),
+            Action::MouseButton(3) => f.write_str("middle"),
+            Action::MouseButton(4) => f.write_str("back"),
+            Action::MouseButton(_) => f.write_str("forward"),
+            Action::DpiCycle => f.write_str("dpi"),
+            Action::ScrollUp => f.write_str("scroll-up"),
+            Action::ScrollDown => f.write_str("scroll-down"),
+            Action::Keys(codes) => {
+                f.write_str("key:")?;
+                let names: Vec<String> = codes
+                    .iter()
+                    .filter(|&&c| c != 0)
+                    .map(|&c| key_name(c))
+                    .collect();
+                f.write_str(&names.join("+"))
+            }
+            Action::Media(code) => write!(f, "media:{}", media_name(*code)),
+        }
+    }
+}
+
+/// Names and codes of keys that are not a single letter, digit or F-key.
+const NAMED_KEYS: [(&str, u8); 27] = [
+    ("ctrl", 0xE0),
+    ("shift", 0xE1),
+    ("alt", 0xE2),
+    ("win", 0xE3),
+    ("rctrl", 0xE4),
+    ("rshift", 0xE5),
+    ("ralt", 0xE6),
+    ("rwin", 0xE7),
+    ("enter", 0x28),
+    ("escape", 0x29),
+    ("backspace", 0x2A),
+    ("tab", 0x2B),
+    ("space", 0x2C),
+    ("minus", 0x2D),
+    ("equals", 0x2E),
+    ("insert", 0x49),
+    ("home", 0x4A),
+    ("page-up", 0x4B),
+    ("delete", 0x4C),
+    ("end", 0x4D),
+    ("page-down", 0x4E),
+    ("right-arrow", 0x4F),
+    ("left-arrow", 0x50),
+    ("down-arrow", 0x51),
+    ("up-arrow", 0x52),
+    ("print-screen", 0x46),
+    ("caps-lock", 0x39),
+];
+
+const MEDIA_KEYS: [(&str, u8); 7] = [
+    ("play-pause", 0xCD),
+    ("next", 0xB5),
+    ("previous", 0xB6),
+    ("stop", 0xB7),
+    ("mute", 0xE2),
+    ("volume-up", 0xE9),
+    ("volume-down", 0xEA),
+];
+
+/// Every key name [`Action`] understands besides raw `0x..` codes, for
+/// pickers in a user interface.
+pub fn key_names() -> Vec<String> {
+    let mut names: Vec<String> = (b'a'..=b'z').map(|c| (c as char).to_string()).collect();
+    names.extend((0..=9).map(|d| d.to_string()));
+    names.extend((1..=24).map(|n| format!("f{n}")));
+    names.extend(NAMED_KEYS.iter().map(|(name, _)| name.to_string()));
+    names
+}
+
+/// Every media key name [`Action`] understands.
+pub fn media_names() -> Vec<&'static str> {
+    MEDIA_KEYS.iter().map(|(name, _)| *name).collect()
+}
+
+fn key_name(code: u8) -> String {
+    match code {
+        0x04..=0x1D => ((b'a' + code - 0x04) as char).to_string(),
+        0x1E..=0x26 => ((b'1' + code - 0x1E) as char).to_string(),
+        0x27 => "0".to_string(),
+        0x3A..=0x45 => format!("f{}", code - 0x3A + 1),
+        0x68..=0x73 => format!("f{}", code - 0x68 + 13),
+        _ => match NAMED_KEYS.iter().find(|(_, c)| *c == code) {
+            Some((name, _)) => name.to_string(),
+            None => format!("0x{code:02x}"),
+        },
+    }
+}
+
+fn media_name(code: u8) -> String {
+    match MEDIA_KEYS.iter().find(|(_, c)| *c == code) {
+        Some((name, _)) => name.to_string(),
+        None => format!("0x{code:02x}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,7 +448,15 @@ mod tests {
         let mut map = ButtonMap::default();
         map.set(Button::Grid(1), "media:play-pause".parse().unwrap());
         map.set(Button::Grid(2), "key:k".parse().unwrap());
-        for (n, key) in [(3, "6"), (4, "7"), (5, "8"), (6, "9"), (7, "i"), (8, "o"), (9, "p")] {
+        for (n, key) in [
+            (3, "6"),
+            (4, "7"),
+            (5, "8"),
+            (6, "9"),
+            (7, "i"),
+            (8, "o"),
+            (9, "p"),
+        ] {
             map.set(Button::Grid(n), format!("key:{key}").parse().unwrap());
         }
         // GG leaves the old key code behind when it disables a button; the
@@ -369,6 +504,30 @@ mod tests {
         assert!("key:a+b+c+d+e".parse::<Action>().is_err());
         assert!("key:nope".parse::<Action>().is_err());
         assert!("media:".parse::<Action>().is_err());
+    }
+
+    #[test]
+    fn names_round_trip() {
+        for button in Button::ALL {
+            assert_eq!(button.to_string().parse::<Button>().unwrap(), button);
+        }
+        let default = ButtonMap::default();
+        for button in Button::ALL {
+            let action = default.get(button);
+            assert_eq!(action.to_string().parse::<Action>().unwrap(), action);
+        }
+        for text in [
+            "key:ctrl+shift+k",
+            "key:f13",
+            "key:0x64",
+            "media:play-pause",
+            "disabled",
+        ] {
+            assert_eq!(text.parse::<Action>().unwrap().to_string(), text);
+        }
+        for name in key_names() {
+            assert!(format!("key:{name}").parse::<Action>().is_ok(), "{name}");
+        }
     }
 
     #[test]

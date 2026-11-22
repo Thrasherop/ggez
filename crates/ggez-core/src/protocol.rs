@@ -74,6 +74,13 @@ impl Link {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rgb(pub u8, pub u8, pub u8);
 
+/// `#rrggbb`, which [`Rgb::from_str`] accepts.
+impl std::fmt::Display for Rgb {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "#{:02x}{:02x}{:02x}", self.0, self.1, self.2)
+    }
+}
+
 impl FromStr for Rgb {
     type Err = ProtoError;
 
@@ -247,6 +254,14 @@ pub fn save(link: Link) -> Vec<u8> {
     link.apply(vec![0x11, 0x00])
 }
 
+/// Ask the 2.4 GHz dongle whether it currently has a radio link to the
+/// mouse. The reply is `[0xBC, 1]` when linked and `[0xBC, 0]` when the mouse
+/// is off, asleep or out of range. The dongle answers this itself, so it
+/// works even with no mouse. Not meaningful over the cable.
+pub fn link_status_query() -> Vec<u8> {
+    vec![0xBC]
+}
+
 /// Ask for the firmware version. The reply is the version as ASCII text
 /// (for example `1.2.4`) and, unlike other replies, does not echo the command.
 pub fn firmware_query(link: Link) -> Vec<u8> {
@@ -255,7 +270,10 @@ pub fn firmware_query(link: Link) -> Vec<u8> {
 
 /// Extract the version from a reply to [`firmware_query`], if it is one.
 pub fn parse_firmware(response: &[u8]) -> Option<String> {
-    let end = response.iter().position(|&b| b == 0).unwrap_or(response.len());
+    let end = response
+        .iter()
+        .position(|&b| b == 0)
+        .unwrap_or(response.len());
     let text = &response[..end];
     let plausible = text.len() >= 3
         && text[0].is_ascii_digit()
@@ -371,11 +389,17 @@ mod tests {
     fn battery() {
         assert_eq!(
             parse_battery(&[0x92, 0x0B]),
-            Ok(Battery { percent: 50, charging: false })
+            Ok(Battery {
+                percent: 50,
+                charging: false
+            })
         );
         assert_eq!(
             parse_battery(&[0x92, 0x95]),
-            Ok(Battery { percent: 100, charging: true })
+            Ok(Battery {
+                percent: 100,
+                charging: true
+            })
         );
         assert!(parse_battery(&[0x92, 0x00]).is_err());
         assert!(parse_battery(&[0x92, 0x7F]).is_err());

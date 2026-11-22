@@ -1,9 +1,11 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use ggez_core::transport::{list_steelseries, listen, HidTransport};
-use ggez_core::{Aerox9, Button, ButtonMap, DefaultLighting, Link, MockTransport, PollingRate, Rgb, Transport, Zone};
-
-mod profile;
+use ggez_core::{
+    Aerox9, Button, ButtonMap, DefaultLighting, Link, MockTransport, PollingRate, Rgb, Transport,
+    Zone,
+};
+use ggez_service::{autostart, helper, paths, Profile};
 
 /// Configure a SteelSeries Aerox 9 Wireless without SteelSeries GG.
 #[derive(Parser)]
@@ -33,6 +35,13 @@ enum LightingArg {
     Reactive,
     Rainbow,
     ReactiveRainbow,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum AutostartArg {
+    Enable,
+    Disable,
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -93,7 +102,15 @@ enum Command {
         bindings: Vec<String>,
     },
     /// Apply every setting in a profile file (TOML). See the README.
-    Apply { file: std::path::PathBuf },
+    /// Without a file, applies the profile the background helper uses.
+    Apply { file: Option<std::path::PathBuf> },
+    /// Run the background helper: re-applies colors whenever the mouse
+    /// connects or wakes, and applies the helper profile when it changes.
+    Daemon,
+    /// Start the background helper at login: `enable`, `disable` or `status`.
+    Autostart { action: AutostartArg },
+    /// Print where the helper profile lives.
+    ProfilePath,
     /// Save current settings to the mouse's onboard memory.
     Save,
     /// Protocol research: print every report the mouse sends on its
@@ -120,17 +137,34 @@ fn main() -> Result<()> {
     if let Command::List = cli.command {
         return list();
     }
+    match cli.command {
+        Command::Daemon => return daemon(),
+        Command::Autostart { action } => return autostart_command(action),
+        Command::ProfilePath => {
+            println!("{}", paths::profile_path()?.display());
+            return Ok(());
+        }
+        _ => {}
+    }
     if let Command::Listen { seconds } = cli.command {
         let start = std::time::Instant::now();
-        listen(std::time::Duration::from_secs(seconds), |interface, report| {
-            // SteelSeries GG, if running, streams lighting commands; hide the
-            // mouse's acknowledgements of those.
-            if report.starts_with(&[0x61, 0x00]) {
-                return;
-            }
-            let len = report.iter().rposition(|&b| b != 0).map_or(1, |i| i + 1);
-            println!("{:8.3}  if{}  {}", start.elapsed().as_secs_f64(), interface, hex(&report[..len]));
-        })?;
+        listen(
+            std::time::Duration::from_secs(seconds),
+            |interface, report| {
+                // SteelSeries GG, if running, streams lighting commands; hide the
+                // mouse's acknowledgements of those.
+                if report.starts_with(&[0x61, 0x00]) {
+                    return;
+                }
+                let len = report.iter().rposition(|&b| b != 0).map_or(1, |i| i + 1);
+                println!(
+                    "{:8.3}  if{}  {}",
+                    start.elapsed().as_secs_f64(),
+                    interface,
+                    hex(&report[..len])
+                );
+            },
+        )?;
         return Ok(());
     }
 
@@ -182,9 +216,46 @@ fn list() -> Result<()> {
     Ok(())
 }
 
+fn daemon() -> Result<()> {
+    let Some(_lock) = helper::InstanceLock::acquire()? else {
+        bail!("the ggez helper is already running");
+    };
+    let profile = paths::profile_path()?;
+    println!("ggez helper running; profile: {}", profile.display());
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    helper::run(&profile, stop, |event| println!("{event:?}"));
+    Ok(())
+}
+
+fn autostart_command(action: AutostartArg) -> Result<()> {
+    match action {
+        AutostartArg::Enable => {
+            let launch = autostart::Launch::for_current_exe()?;
+            autostart::enable(&launch)?;
+            println!(
+                "The helper will start at login: {}",
+                launch.program.display()
+            );
+        }
+        AutostartArg::Disable => {
+            autostart::disable()?;
+            println!("The helper will no longer start at login.");
+        }
+        AutostartArg::Status => match autostart::location()? {
+            Some(location) => println!("enabled ({location})"),
+            None => println!("disabled"),
+        },
+    }
+    Ok(())
+}
+
 fn run<T: Transport>(mouse: &mut Aerox9<T>, cli: &Cli) -> Result<()> {
     match &cli.command {
-        Command::List | Command::Listen { .. } => unreachable!("handled in main"),
+        Command::List
+        | Command::Listen { .. }
+        | Command::Daemon
+        | Command::Autostart { .. }
+        | Command::ProfilePath => unreachable!("handled in main"),
         Command::Battery => {
             let b = mouse
                 .battery()
@@ -217,11 +288,17 @@ fn run<T: Transport>(mouse: &mut Aerox9<T>, cli: &Cli) -> Result<()> {
             mouse.set_dpi(presets, select - 1)?;
         }
         Command::Polling { hz } => {
-            let rate = PollingRate::from_hz(*hz)
-                .with_context(|| format!("unsupported polling rate {hz} (use 125, 250, 500, 1000)"))?;
+            let rate = PollingRate::from_hz(*hz).with_context(|| {
+                format!("unsupported polling rate {hz} (use 125, 250, 500, 1000)")
+            })?;
             mouse.set_polling_rate(rate)?;
         }
-        Command::Color { all, top, middle, bottom } => {
+        Command::Color {
+            all,
+            top,
+            middle,
+            bottom,
+        } => {
             let zones = [
                 (Zone::Top, top.or(*all)),
                 (Zone::Middle, middle.or(*all)),
@@ -261,11 +338,11 @@ fn run<T: Transport>(mouse: &mut Aerox9<T>, cli: &Cli) -> Result<()> {
             mouse.set_buttons(&map)?;
         }
         Command::Apply { file } => {
-            let text = std::fs::read_to_string(file)
-                .with_context(|| format!("could not read {}", file.display()))?;
-            let profile = profile::Profile::parse(&text)
-                .with_context(|| format!("{} is not a valid profile", file.display()))?;
-            if !profile.apply(mouse)? {
+            let file = match file {
+                Some(file) => file.clone(),
+                None => paths::profile_path()?,
+            };
+            if !Profile::load(&file)?.apply(mouse)? {
                 bail!("{} sets nothing", file.display());
             }
         }
