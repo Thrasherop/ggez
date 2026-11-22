@@ -18,7 +18,7 @@ use eframe::egui::{
     self, pos2, vec2, Color32, CornerRadius, FontId, Mesh, Pos2, Rect, Sense, Shape, Stroke,
     StrokeKind, Ui, WidgetInfo, WidgetType,
 };
-use ggez_core::{Action, Button, ButtonMap};
+use ggez_core::Button;
 
 use crate::theme::{
     self, ACCENT, EDGE, ON_SELECT, RAISED, RAISED_HOVER, SELECT, TEXT, TEXT_DIM, TEXT_FAINT,
@@ -527,11 +527,6 @@ fn paint_opening(ui: &Ui, middle: Pos2, reach: f32, glow: Option<Color32>) {
     }
 }
 
-/// How a binding reads in the small space of a key in the grid.
-fn short(action: Action, describe: &dyn Fn(Action) -> String) -> String {
-    describe(action).replace(" + ", "+")
-}
-
 /// What the lights are doing.
 pub enum Lights {
     /// Front, palm, wrist.
@@ -663,18 +658,17 @@ const CALLOUTS: [Callout; 8] = [
 /// The button picker: the mouse, placed and sized by `place`, with a label
 /// for each of its controls beside it and the thumb buttons laid out as a
 /// grid. Every rebindable control can be clicked, on the mouse or by its
-/// label; returns the one that was. `describe` turns a binding into words
-/// and `title` names a button; the lattice glows dimly in `lights`.
+/// label; returns the one that was. `binding` says what a button does, in
+/// words, and whether that differs from the factory layout; `title` names
+/// a button; the lattice glows dimly in `lights`.
 pub fn buttons(
     ui: &mut Ui,
     place: Place,
-    map: &ButtonMap,
     selected: Button,
     lights: [Color32; 3],
-    describe: &dyn Fn(Action) -> String,
+    binding: &dyn Fn(Button) -> (String, bool),
     title: &dyn Fn(Button) -> String,
 ) -> Option<Button> {
-    let factory = ButtonMap::default();
     let clicked = std::cell::Cell::new(None);
     let body = Body::placed(place.center, place.scale * BUTTONS_HEIGHT);
     remember_focus(ui, &body);
@@ -689,7 +683,7 @@ pub fn buttons(
                 Sense::click(),
             )
             .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(format!("{}: {}", title(button), describe(map.get(button))));
+            .on_hover_text(format!("{}: {}", title(button), binding(button).0));
         response.widget_info(|| {
             WidgetInfo::selected(WidgetType::Button, true, button == selected, title(button))
         });
@@ -699,7 +693,6 @@ pub fn buttons(
         }
         (button == selected, response.hovered())
     };
-    let changed = |button: Button| map.get(button) != factory.get(button);
 
     let lit = lights != [Color32::BLACK; 3];
     let dim = lights.map(|color| theme::lerp(Color32::BLACK, color, 0.5));
@@ -780,11 +773,12 @@ pub fn buttons(
             body.nose.x + callout.side * (body.of(0.285) + 30.0),
             first + callout.line * spacing,
         );
-        let ink = if changed(button) { ACCENT } else { TEXT_DIM };
+        let (does, changed) = binding(button);
+        let ink = if changed { ACCENT } else { TEXT_DIM };
         let pressed = label(
             ui,
             button,
-            &describe(map.get(button)),
+            &does,
             edge,
             callout.side,
             body.at(callout.spot.0, callout.spot.1),
@@ -868,14 +862,16 @@ pub fn buttons(
                 TEXT_FAINT
             },
         );
-        let text = short(map.get(button), describe);
+        // Shortened to fit a key: "Ctrl+X", not "Ctrl + X".
+        let (does, changed) = binding(button);
+        let text = does.replace(" + ", "+");
         let font = FontId::new(
             if text.chars().count() > 6 { 10.5 } else { 13.0 },
             theme::strong(),
         );
         let color = if is_selected {
             ON_SELECT
-        } else if changed(button) {
+        } else if changed {
             ACCENT
         } else {
             TEXT

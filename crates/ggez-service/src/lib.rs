@@ -6,6 +6,8 @@ pub mod autostart;
 pub mod battery;
 pub mod gg;
 pub mod helper;
+pub mod macro_host;
+pub mod macros;
 pub mod paths;
 pub mod profile;
 pub mod profiles;

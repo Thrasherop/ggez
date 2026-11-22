@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use ggez_core::{Action, Button, ButtonMap, Rgb};
+use ggez_service::macros::{MacroSpec, Mode};
 use ggez_service::profile::{Colors, DEFAULT_LIGHTING_MODES};
 use ggez_service::Profile;
 
@@ -43,6 +44,52 @@ pub struct Draft {
     pub zones: [[u8; 3]; 3],
     pub reactive: Option<[u8; 3]>,
     pub buttons: ButtonMap,
+    /// Buttons that run a macro, by the button's name. A button listed
+    /// here does that instead of its binding in `buttons`, which is
+    /// kept for when the macro is removed.
+    pub macros: BTreeMap<String, MacroDraft>,
+}
+
+/// A macro as the window edits it: its steps are text, one step to a line,
+/// and may be wrong while they are being typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MacroDraft {
+    pub mode: Mode,
+    pub steps: String,
+}
+
+impl Default for MacroDraft {
+    /// Something that works, to start from.
+    fn default() -> Self {
+        Self {
+            mode: Mode::Once,
+            steps: "key:ctrl+c".to_string(),
+        }
+    }
+}
+
+impl MacroDraft {
+    /// The steps as a profile lists them: every line that is not blank.
+    pub fn lines(&self) -> Vec<String> {
+        self.steps
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// What is wrong with the steps, if anything, naming the line.
+    pub fn problem(&self) -> Option<String> {
+        let lines = self.lines();
+        if lines.is_empty() {
+            return Some("Add at least one step.".to_string());
+        }
+        lines.iter().enumerate().find_map(|(index, line)| {
+            ggez_service::macros::check_step(line)
+                .err()
+                .map(|e| format!("Line {}: {e:#}", index + 1))
+        })
+    }
 }
 
 impl Default for Draft {
@@ -62,6 +109,7 @@ impl Default for Draft {
             zones: [[255, 80, 0], [255, 80, 0], [255, 80, 0]],
             reactive: None,
             buttons: ButtonMap::default(),
+            macros: BTreeMap::new(),
         }
     }
 }
@@ -150,7 +198,28 @@ impl Draft {
                 }
             }
         }
+        for (name, spec) in profile.macros.iter().flatten() {
+            let Ok(button) = name.parse::<Button>() else {
+                continue;
+            };
+            let mode = Mode::ALL
+                .into_iter()
+                .find(|mode| Some(mode.name()) == spec.mode.as_deref())
+                .unwrap_or_default();
+            draft.macros.insert(
+                button.to_string(),
+                MacroDraft {
+                    mode,
+                    steps: spec.steps.join("\n"),
+                },
+            );
+        }
         draft
+    }
+
+    /// Whether a button runs a macro.
+    pub fn has_macro(&self, button: Button) -> bool {
+        self.macros.contains_key(&button.to_string())
     }
 
     /// A profile that sets everything shown in the window.
@@ -160,8 +229,19 @@ impl Draft {
         // the file stays short and readable.
         let buttons: BTreeMap<String, String> = Button::ALL
             .into_iter()
-            .filter(|&b| self.buttons.get(b) != factory.get(b))
+            .filter(|&b| self.buttons.get(b) != factory.get(b) && !self.has_macro(b))
             .map(|b| (b.to_string(), self.buttons.get(b).to_string()))
+            .collect();
+        let macros: BTreeMap<String, MacroSpec> = self
+            .macros
+            .iter()
+            .map(|(name, entry)| {
+                let spec = MacroSpec {
+                    mode: (entry.mode != Mode::Once).then(|| entry.mode.name().to_string()),
+                    steps: entry.lines(),
+                };
+                (name.clone(), spec)
+            })
             .collect();
         let (effect, colors) = match self.effect {
             Effect::Rainbow => ("rainbow", Colors::default()),
@@ -190,6 +270,7 @@ impl Draft {
             colors,
             // An empty table still means "write the factory layout".
             buttons: Some(buttons),
+            macros: (!macros.is_empty()).then_some(macros),
         }
     }
 
@@ -198,7 +279,7 @@ impl Draft {
     pub fn has_left_click(&self) -> bool {
         Button::ALL
             .into_iter()
-            .any(|b| self.buttons.get(b) == Action::MouseButton(1))
+            .any(|b| self.buttons.get(b) == Action::MouseButton(1) && !self.has_macro(b))
     }
 }
 
@@ -284,5 +365,63 @@ mod tests {
         assert!(!draft.has_left_click());
         draft.buttons.set(Button::Grid(1), Action::MouseButton(1));
         assert!(draft.has_left_click());
+    }
+
+    #[test]
+    fn macros_survive_the_trip_to_a_profile_and_back() {
+        let mut draft = Draft::default();
+        draft
+            .buttons
+            .set(Button::Grid(4), "key:ctrl+z".parse().unwrap());
+        draft.macros.insert(
+            "g4".into(),
+            MacroDraft {
+                mode: Mode::Repeat,
+                steps: "click:left\n\nwait:40\n".into(),
+            },
+        );
+        draft.macros.insert("g9".into(), MacroDraft::default());
+        let profile = draft.to_profile();
+        profile.validate().unwrap();
+        let macros = profile.macros.as_ref().unwrap();
+        assert_eq!(macros["g4"].mode.as_deref(), Some("repeat"));
+        assert_eq!(
+            macros["g4"].steps,
+            ["click:left", "wait:40"],
+            "blank lines dropped"
+        );
+        assert_eq!(
+            macros["g9"].mode, None,
+            "once is the default and is left out"
+        );
+        // The binding under a macro is not written: the macro replaces it.
+        assert!(!profile.buttons.as_ref().unwrap().contains_key("g4"));
+
+        let back = Draft::from_profile(&profile);
+        assert!(back.has_macro(Button::Grid(4)) && back.has_macro(Button::Grid(9)));
+        assert_eq!(back.macros["g4"].mode, Mode::Repeat);
+        assert_eq!(back.macros["g4"].steps, "click:left\nwait:40");
+    }
+
+    #[test]
+    fn a_macro_being_typed_says_what_is_wrong_with_it() {
+        let mut entry = MacroDraft::default();
+        assert_eq!(entry.problem(), None);
+        entry.steps = "key:ctrl+c\nhop".into();
+        assert!(
+            entry.problem().unwrap().starts_with("Line 2:"),
+            "{:?}",
+            entry.problem()
+        );
+        entry.steps = "  \n".into();
+        assert_eq!(entry.problem().as_deref(), Some("Add at least one step."));
+    }
+
+    #[test]
+    fn a_macro_on_the_only_left_click_button_counts_as_losing_left_click() {
+        let mut draft = Draft::default();
+        assert!(draft.has_left_click());
+        draft.macros.insert("left".into(), MacroDraft::default());
+        assert!(!draft.has_left_click());
     }
 }

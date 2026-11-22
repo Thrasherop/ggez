@@ -8,8 +8,12 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use ggez_core::protocol::{Illumination, MAX_BRIGHTNESS};
-use ggez_core::{Aerox9, Button, ButtonMap, DefaultLighting, PollingRate, Rgb, Transport, Zone};
+use ggez_core::{
+    Action, Aerox9, Button, ButtonMap, DefaultLighting, PollingRate, Rgb, Transport, Zone,
+};
 use serde::{Deserialize, Serialize};
+
+use crate::macros::{MacroSpec, Plan};
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -57,6 +61,14 @@ pub struct Profile {
         serialize_with = "in_physical_order"
     )]
     pub buttons: Option<BTreeMap<String, String>>,
+    /// Buttons that run a list of steps on the computer instead of doing
+    /// one thing on the mouse. They need the helper running. See
+    /// [`crate::macros`].
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "in_physical_order"
+    )]
+    pub macros: Option<BTreeMap<String, MacroSpec>>,
 }
 
 /// Zone colors as `#rrggbb` or a color name. `all` fills in any zone that
@@ -76,8 +88,8 @@ pub struct Colors {
 
 /// Write bindings in the order the buttons sit on the mouse (`g2` before
 /// `g10`), not in alphabetical order.
-fn in_physical_order<S: serde::Serializer>(
-    buttons: &Option<BTreeMap<String, String>>,
+fn in_physical_order<S: serde::Serializer, V: Serialize>(
+    buttons: &Option<BTreeMap<String, V>>,
     serializer: S,
 ) -> Result<S::Ok, S::Error> {
     let position = |name: &str| {
@@ -86,7 +98,7 @@ fn in_physical_order<S: serde::Serializer>(
             .and_then(|button| Button::ALL.iter().position(|b| *b == button))
             .unwrap_or(usize::MAX)
     };
-    let mut entries: Vec<(&String, &String)> = buttons.iter().flatten().collect();
+    let mut entries: Vec<(&String, &V)> = buttons.iter().flatten().collect();
     entries.sort_by_key(|(name, _)| position(name));
     serializer.collect_map(entries)
 }
@@ -244,7 +256,7 @@ impl Profile {
             (Zone::Middle, color(&self.colors.middle)?),
             (Zone::Bottom, color(&self.colors.bottom)?),
         ];
-        let buttons = self
+        let mut buttons = self
             .buttons
             .as_ref()
             .map(|bindings| -> Result<ButtonMap> {
@@ -255,6 +267,40 @@ impl Profile {
                 Ok(map)
             })
             .transpose()?;
+        // A macro button sends its trigger key from the mouse; the helper
+        // does the rest. So macros mean a button map is sent, even when the
+        // profile names no other binding.
+        let plan = self.macro_plan()?;
+        if !plan.is_empty() {
+            let listed = |button: Button| {
+                self.buttons
+                    .iter()
+                    .flatten()
+                    .any(|(name, _)| name.parse::<Button>().ok() == Some(button))
+            };
+            let map = buttons.get_or_insert_with(ButtonMap::default);
+            for button in Button::ALL {
+                let Action::Keys(keys) = map.get(button) else {
+                    continue;
+                };
+                let taken = plan
+                    .macros
+                    .iter()
+                    .find(|(_, trigger, _)| keys.contains(trigger));
+                if let Some((owner, trigger, _)) = taken {
+                    bail!(
+                        "{button} is bound to {}, which the macro on {owner} needs to tell ggez it is held. Use another key for {button}",
+                        Action::key(*trigger)
+                    );
+                }
+            }
+            for (button, trigger, _) in &plan.macros {
+                if listed(*button) {
+                    bail!("{button} has both a binding under [buttons] and a macro; remove one");
+                }
+                map.set(*button, Action::key(*trigger));
+            }
+        }
         Ok(Checked {
             dpi,
             polling,
@@ -267,6 +313,11 @@ impl Profile {
             zones,
             buttons,
         })
+    }
+
+    /// The macros in the profile, each with the key the mouse sends for it.
+    pub fn macro_plan(&self) -> Result<Plan> {
+        Plan::new(self.macros.as_ref())
     }
 
     /// Send every setting in the profile. Nothing is sent if any value is
@@ -507,5 +558,90 @@ scroll-up = \"left\"
             profile
         );
         assert_eq!(Profile::default().to_toml().unwrap().trim(), "");
+    }
+
+    #[test]
+    fn a_macro_button_sends_its_trigger_key_from_the_mouse() {
+        let profile = Profile::parse(
+            r#"
+            [buttons]
+            g1 = "key:ctrl+z"
+
+            [macros.g7]
+            steps = ["key:ctrl+c", "wait:80", "key:ctrl+v"]
+
+            [macros.g2]
+            mode = "repeat"
+            steps = ["click:left", "wait:40"]
+            "#,
+        )
+        .unwrap();
+        let plan = profile.macro_plan().unwrap();
+        let triggers: Vec<(Button, u8)> =
+            plan.macros.iter().map(|(b, key, _)| (*b, *key)).collect();
+        assert_eq!(triggers, [(Button::Grid(2), 0x68), (Button::Grid(7), 0x69)]);
+
+        let buttons = profile.check().unwrap().buttons.unwrap();
+        assert_eq!(buttons.get(Button::Grid(2)), Action::key(0x68), "F13");
+        assert_eq!(buttons.get(Button::Grid(7)), Action::key(0x69), "F14");
+        assert_eq!(buttons.get(Button::Grid(1)), "key:ctrl+z".parse().unwrap());
+        assert_eq!(
+            buttons.get(Button::Left),
+            ButtonMap::default().get(Button::Left)
+        );
+    }
+
+    #[test]
+    fn macros_alone_still_send_a_button_map() {
+        let profile = Profile::parse("[macros.g3]\nsteps = [\"text:hello\"]").unwrap();
+        let buttons = profile.check().unwrap().buttons.expect("a button map");
+        assert_eq!(buttons.get(Button::Grid(3)), Action::key(0x68));
+        // Without macros, and without [buttons], the mouse's map is left alone.
+        assert!(Profile::parse("polling = 500")
+            .unwrap()
+            .check()
+            .unwrap()
+            .buttons
+            .is_none());
+    }
+
+    #[test]
+    fn macro_mistakes_are_refused_with_a_reason() {
+        let fails = |text: &str, expected: &str| {
+            let error = format!(
+                "{:#}",
+                Profile::parse(text).unwrap().validate().unwrap_err()
+            );
+            assert!(error.contains(expected), "{error:?} lacks {expected:?}");
+        };
+        fails(
+            "[buttons]\ng3 = \"key:a\"\n[macros.g3]\nsteps = [\"key:b\"]",
+            "both a binding under [buttons] and a macro",
+        );
+        fails(
+            "[buttons]\ng1 = \"key:f13\"\n[macros.g3]\nsteps = [\"key:b\"]",
+            "g1 is bound to key:f13",
+        );
+        fails("[macros.g3]\nsteps = [\"hop\"]", "the macro on g3");
+        fails("[macros.thumb]\nsteps = [\"key:a\"]", "thumb");
+        // F13 is free to bind when no macro needs it.
+        Profile::parse("[buttons]\ng1 = \"key:f13\"")
+            .unwrap()
+            .validate()
+            .unwrap();
+    }
+
+    #[test]
+    fn macros_are_written_in_the_order_of_the_buttons() {
+        let profile = Profile::parse(
+            "[macros.g10]\nsteps = [\"key:a\"]\n[macros.g2]\nmode = \"toggle\"\nsteps = [\"key:b\"]",
+        )
+        .unwrap();
+        let text = profile.to_toml().unwrap();
+        assert!(
+            text.find("[macros.g2]").unwrap() < text.find("[macros.g10]").unwrap(),
+            "{text}"
+        );
+        assert_eq!(Profile::parse(&text).unwrap(), profile);
     }
 }

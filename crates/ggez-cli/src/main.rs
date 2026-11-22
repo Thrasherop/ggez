@@ -315,7 +315,14 @@ fn daemon(profile: Option<std::path::PathBuf>) -> Result<()> {
     };
     println!("ggez helper running; profile: {}", profile.display());
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    helper::run(&profile, stop, |event| println!("{event:?}"));
+    helper::run(&profile, stop, |event| match event {
+        helper::Event::Macros(0) => println!("No macros to run."),
+        helper::Event::Macros(count) => println!("Running macros for {count} button(s)."),
+        helper::Event::MacrosUnavailable => {
+            println!("The profile has macros, but ggez can run them on Windows only so far.")
+        }
+        other => println!("{other:?}"),
+    });
     Ok(())
 }
 

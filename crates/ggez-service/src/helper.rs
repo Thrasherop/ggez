@@ -13,6 +13,8 @@ use std::time::{Duration, SystemTime};
 use anyhow::{Context, Result};
 use ggez_core::{Aerox9, Transport};
 
+use crate::macro_host::Host;
+use crate::macros::Plan;
 use crate::profile::Profile;
 
 /// How often to look for the mouse and for profile changes.
@@ -36,6 +38,10 @@ pub enum Event {
     Failed(String),
     /// The battery level, when first read and whenever it changes.
     Battery { percent: u8, charging: bool },
+    /// This many buttons now run macros.
+    Macros(usize),
+    /// The profile has macros, but they cannot run on this system.
+    MacrosUnavailable,
 }
 
 /// Tracks what has already been applied so that each pass does only what
@@ -88,6 +94,15 @@ impl Helper {
             }
             Err(e) => Some(Event::BadProfile(format!("{e:#}"))),
         }
+    }
+
+    /// The macros of the profile in use. A profile that could not be read
+    /// leaves the previous one, and so its macros, in effect.
+    pub fn macro_plan(&self) -> Plan {
+        self.profile
+            .as_ref()
+            .and_then(|profile| profile.macro_plan().ok())
+            .unwrap_or_default()
     }
 
     /// Read the battery level now and then, and report it when it is new.
@@ -209,6 +224,10 @@ impl InstanceLock {
 pub fn run(profile_path: &Path, stop: Arc<AtomicBool>, mut on_event: impl FnMut(&Event)) {
     let mut helper = Helper::new(profile_path.to_path_buf());
     let mut mouse = None;
+    // Macros run whether or not the mouse can be reached for settings: its
+    // buttons keep sending their keys either way.
+    let host = Host::start();
+    let mut plan = Plan::default();
     while !stop.load(Ordering::Relaxed) {
         // Looking for the device means listing every HID device on the
         // machine, so keep it open while it is reachable.
@@ -217,6 +236,17 @@ pub fn run(profile_path: &Path, stop: Arc<AtomicBool>, mut on_event: impl FnMut(
         }
         for event in helper.tick(mouse.as_mut()) {
             on_event(&event);
+        }
+        let wanted = helper.macro_plan();
+        if wanted != plan {
+            match &host {
+                Some(host) => {
+                    host.set_plan(wanted.clone());
+                    on_event(&Event::Macros(wanted.macros.len()));
+                }
+                None => on_event(&Event::MacrosUnavailable),
+            }
+            plan = wanted;
         }
         // Unreachable: it may have been unplugged, or a cable may have
         // replaced the dongle. Look again next time.

@@ -36,3 +36,14 @@ bottom = "#0000ff"    # by the wrist
 g10 = "key:ctrl+x"
 g11 = "key:ctrl+c"
 g12 = "key:ctrl+v"
+
+# A macro is a button that runs a list of steps on the computer. Macros
+# need the ggez helper running, and run on Windows only so far. Up to
+# twelve buttons can have one, and a button has either a macro or a binding
+# under [buttons], not both.
+# Steps: key:<key>[+<key>...], down:<key>, up:<key>, text:<what to type>,
+#        click:<left|right|middle|back|forward>, wait:<milliseconds>
+# mode:  "once" for each press (the default), "repeat" while the button is
+#        held, or "toggle" from one press until the next.
+[macros.g9]
+steps = ["key:ctrl+c", "wait:80", "key:alt+tab", "wait:200", "key:ctrl+v"]

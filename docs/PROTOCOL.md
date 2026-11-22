@@ -152,6 +152,15 @@ side 2 `04`, side 5 `08`, side 1 `40` and side 4 `80` of byte 8; side 7
 that a "disabled" button was pressed, and it is what a software macro
 engine in ggez would read.
 
+On Windows that report is out of reach for an ordinary program: the system
+opens a mouse for itself alone and passes on only movement and five
+buttons. GG installs its own HID driver (`sshid`), which is presumably how
+it gets at the rest. ggez has no driver, so its macros do not read this
+report. A macro button is bound, on the mouse, to one of the keys F13 to
+F24; the mouse sends that key for as long as the button is held, and the
+helper catches it. Whether macOS and Linux let a program read the report
+directly is ❓.
+
 Byte 0 of the same report is the ordinary button bitmap (bit 0 left, up to
 bit 7 for button 8).
 

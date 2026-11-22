@@ -96,7 +96,13 @@ impl Tray {
             }
             // Retried on the next pass; `Disconnected` covers a mouse
             // that has really gone.
-            Event::Failed(_) => None,
+            Event::Failed(_) | Event::Macros(_) => None,
+            Event::MacrosUnavailable => Some(Popup {
+                title: "Macros are not running".into(),
+                text: "Your profile has macros, but ggez can only run them on Windows so far."
+                    .into(),
+                warning: true,
+            }),
         }
     }
 

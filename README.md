@@ -23,6 +23,7 @@ ggez closed, or on a computer that has never heard of it.
 | | |
 | --- | --- |
 | **Buttons** | Rebind all 18 buttons and both scroll directions: keys, shortcuts of up to four keys (Ctrl+Shift+K), mouse buttons, media keys, CPI cycle, or nothing. Bindings live on the mouse, and a key stays held for as long as you hold the button. |
+| **Macros** | A button can run a list of steps: shortcuts one after another, typed text, clicks, pauses. Once per press, again and again while held, or switched on and off. Windows only so far, and only while ggez is running. |
 | **Sensitivity** | Up to five CPI levels, 100-18000. |
 | **Polling rate** | 125, 250, 500 or 1000 Hz. |
 | **Lighting** | A color per zone, the built-in rainbow, brightness, a flash on click, lights off while the mouse moves, and what the mouse shows when no software is driving it. |
@@ -108,6 +109,46 @@ Every key is optional. [profile.example.toml](profile.example.toml) shows
 them all. The app and the helper use the profile at the path printed by
 `ggez profile-path`.
 
+### Macros
+
+A macro is a button that runs a list of steps on the computer:
+
+```toml
+[macros.g7]
+steps = ["key:ctrl+c", "wait:80", "key:alt+tab", "wait:200", "key:ctrl+v"]
+
+[macros.g8]
+mode = "repeat"        # for as long as the button is held
+steps = ["click:left", "wait:40"]
+```
+
+| Step | What it does |
+| --- | --- |
+| `key:ctrl+c` | Press a key or a shortcut and let go. |
+| `down:shift`, `up:shift` | Hold a key down, and let it go later. |
+| `text:hello` | Type text, whatever the keyboard layout. |
+| `click:left` | Click a mouse button: left, right, middle, back or forward. |
+| `wait:50` | Pause, in milliseconds. |
+
+`mode` is `once` (once for each press, the default), `repeat` (again and
+again while the button is held) or `toggle` (from one press until the
+next). In the app, choose **Macro: several steps** for a button.
+
+What to know:
+
+- **Macros need ggez running**, unlike everything else. The mouse cannot
+  run them itself, so the helper does. Turn on **Settings → Start the
+  helper when I log in**.
+- **Windows only so far.** On macOS and Linux the helper says so and the
+  button does nothing.
+- **Up to twelve buttons** can have a macro. On the mouse, each one is
+  bound to one of the keys F13 to F24, which no keyboard has; ggez catches
+  that key before any program sees it and runs the steps. While a macro
+  uses one of those keys, a real F13 to F24 key press does the same.
+- A program running as administrator does not receive what a macro types
+  unless ggez runs as administrator too, and a few games ignore keys that
+  do not come from a real keyboard.
+
 ### Several profiles
 
 Keep one setup for work and another for games, and switch with one click
@@ -170,12 +211,14 @@ mouse, or still a guess. In short:
   acknowledged by the mouse and, where compared, match GG's bytes exactly;
   their effect has not been measured.
 - ggez is not in the path your movement and clicks take. It writes settings
-  and exits.
+  and exits. The one exception is a button you give a macro: the helper
+  catches that button's key and presses the macro's keys for it.
 
 ## Not done yet
 
 See the [issues](https://github.com/Thrasherop/ggez/issues). The larger
-gaps: macros, Bluetooth, and testing on macOS and Linux.
+gaps: macros on macOS and Linux, a shift layer, Bluetooth, and testing on
+macOS and Linux.
 
 Three things GG offers are deliberately left out, because GG does them in
 software on the computer and not on the mouse: angle snapping, acceleration,

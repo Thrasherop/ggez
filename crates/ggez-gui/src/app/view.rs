@@ -5,6 +5,8 @@ use eframe::egui::{
     Stroke, Ui, WidgetInfo, WidgetType,
 };
 use ggez_core::{key_names, media_names, Action, Button, ButtonMap, Link};
+use ggez_service::macro_host::Host;
+use ggez_service::macros::{Mode, MAX_MACROS};
 use ggez_service::profile::DEFAULT_LIGHTING_MODES;
 use ggez_service::Profile;
 
@@ -489,13 +491,22 @@ impl App {
         // window, up to a point.
         let k = ((height - 60.0) / 356.0).clamp(1.0, 1.25);
         let center = pos2(stage.left() + stage.width() * 0.43, stage.center().y);
+        let factory = ButtonMap::default();
+        let draft = &self.draft;
+        let binding = |button: Button| {
+            if draft.has_macro(button) {
+                ("Macro".to_string(), true)
+            } else {
+                let action = draft.buttons.get(button);
+                (describe(action), action != factory.get(button))
+            }
+        };
         let clicked = mouse_view::buttons(
             ui,
             Place { center, scale: k },
-            &self.draft.buttons,
             self.selected_button,
             lights,
-            &describe,
+            &binding,
             &button_title,
         );
         if let Some(button) = clicked {
@@ -532,7 +543,7 @@ impl App {
         }
         let changed = Button::ALL
             .into_iter()
-            .filter(|&b| self.draft.buttons.get(b) != ButtonMap::default().get(b))
+            .filter(|&b| self.draft.has_macro(b) || self.draft.buttons.get(b) != factory.get(b))
             .count();
         if changed > 0 {
             reset.label(
@@ -552,13 +563,22 @@ impl App {
         let button = self.selected_button;
         let action = self.draft.buttons.get(button);
         ui.label(RichText::new(button_title(button)).font(FontId::new(18.0, theme::strong())));
+        let is_macro = self.draft.has_macro(button);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
-            action_keycaps(ui, action);
+            if is_macro {
+                theme::keycap(ui, "Macro");
+            } else {
+                action_keycaps(ui, action);
+            }
         });
         ui.add_space(8.0);
 
-        let kind = Kind::of(action);
+        let kind = if is_macro {
+            Kind::Macro
+        } else {
+            Kind::of(action)
+        };
         theme::caption(ui, "What it does");
         egui::ComboBox::from_id_salt("action-kind")
             .icon(list_mark)
@@ -572,12 +592,24 @@ impl App {
                         .clicked()
                         && kind != candidate
                     {
-                        self.set_action(candidate.default_action());
+                        self.set_macro(candidate == Kind::Macro);
+                        // Leaving a macro for the kind of binding the
+                        // button had underneath keeps that binding.
+                        if candidate != Kind::Macro && Kind::of(action) != candidate {
+                            self.set_action(candidate.default_action());
+                        }
                     }
                 }
-            });
+            })
+            .response
+            .widget_info(|| named_list("What it does", kind.label()));
         ui.add_space(4.0);
 
+        if is_macro {
+            self.macro_editor(ui);
+            self.reset_button(ui);
+            return;
+        }
         match action {
             Action::Keys(codes) => self.keys_editor(ui, codes),
             Action::MouseButton(current) => {
@@ -642,16 +674,91 @@ impl App {
             }
         });
 
+        self.reset_button(ui);
+    }
+
+    /// Puts the selected button back to what it does out of the box.
+    fn reset_button(&mut self, ui: &mut Ui) {
+        let button = self.selected_button;
         let factory = ButtonMap::default().get(button);
+        let changed = self.draft.buttons.get(button) != factory || self.draft.has_macro(button);
         if ui
             .add_enabled(
-                action != factory,
+                changed,
                 egui::Button::new("Reset this button").min_size(vec2(0.0, 32.0)),
             )
             .on_hover_text(format!("Factory binding: {}", describe(factory)))
             .clicked()
         {
+            self.set_macro(false);
             self.set_action(factory);
+        }
+    }
+
+    /// The steps of the selected button's macro and when it runs.
+    fn macro_editor(&mut self, ui: &mut Ui) {
+        let name = self.selected_button.to_string();
+        let count = self.draft.macros.len();
+        let Some(entry) = self.draft.macros.get_mut(&name) else {
+            return;
+        };
+        theme::caption(ui, "Runs");
+        let options = [
+            (Mode::Once, "Once"),
+            (Mode::Repeat, "Held"),
+            (Mode::Toggle, "Toggle"),
+        ];
+        if let Some(mode) = theme::segmented(ui, entry.mode, &options) {
+            entry.mode = mode;
+        }
+        hint(
+            ui,
+            match entry.mode {
+                Mode::Once => "Once each time you press the button.",
+                Mode::Repeat => "Again and again for as long as you hold the button.",
+                Mode::Toggle => "Again and again from one press until the next.",
+            },
+        );
+        ui.add_space(2.0);
+        theme::caption(ui, "Steps, one per line");
+        ui.add(
+            egui::TextEdit::multiline(&mut entry.steps)
+                .font(egui::TextStyle::Monospace)
+                .desired_rows(5)
+                .desired_width(f32::INFINITY)
+                .hint_text("key:ctrl+c"),
+        );
+        match entry.problem() {
+            Some(problem) => {
+                ui.label(RichText::new(problem).color(DANGER).size(12.5));
+            }
+            None => hint(
+                ui,
+                "key:ctrl+c   down:shift   up:shift   text:hello   click:left   wait:50 (milliseconds)",
+            ),
+        }
+        if count > MAX_MACROS {
+            ui.label(
+                RichText::new(format!(
+                    "{count} buttons have a macro, but at most {MAX_MACROS} can."
+                ))
+                .color(DANGER)
+                .size(12.5),
+            );
+        }
+        ui.add_space(2.0);
+        if Host::supported() {
+            theme::callout(
+                ui,
+                TEXT_DIM,
+                "A macro runs on this computer, so it works only while ggez is running. Other bindings live on the mouse.",
+            );
+        } else {
+            theme::callout(
+                ui,
+                WARNING,
+                "ggez can run macros on Windows only so far. On this computer the button will do nothing.",
+            );
         }
     }
 
@@ -1030,7 +1137,13 @@ impl App {
                 .response
                 .on_hover_text(
                     "What the mouse shows on its own after power-on. Stored on the mouse.",
-                );
+                )
+                .widget_info(|| {
+                    named_list(
+                        "Without ggez",
+                        default_lighting_title(self.draft.default_lighting),
+                    )
+                });
             ui.add_space(8.0);
 
             theme::toggle(
@@ -1510,6 +1623,14 @@ fn choice(ui: &mut Ui, selected: bool, text: &str) -> bool {
     .clicked()
 }
 
+/// What a list control tells assistive technology: its name, which is
+/// written above it and not part of it, and the choice it shows.
+fn named_list(name: &str, chosen: &str) -> WidgetInfo {
+    let mut info = WidgetInfo::labeled(WidgetType::ComboBox, true, name);
+    info.current_text_value = Some(chosen.to_string());
+    info
+}
+
 /// The mark on the built-in list controls, to match the custom ones.
 fn list_mark(
     ui: &Ui,
@@ -1554,6 +1675,7 @@ enum Kind {
     Keyboard,
     Mouse,
     Media,
+    Macro,
     DpiCycle,
     ScrollUp,
     ScrollDown,
@@ -1561,10 +1683,11 @@ enum Kind {
 }
 
 impl Kind {
-    const ALL: [Kind; 7] = [
+    const ALL: [Kind; 8] = [
         Kind::Keyboard,
         Kind::Mouse,
         Kind::Media,
+        Kind::Macro,
         Kind::DpiCycle,
         Kind::ScrollUp,
         Kind::ScrollDown,
@@ -1588,6 +1711,7 @@ impl Kind {
             Kind::Keyboard => "Keyboard key or shortcut",
             Kind::Mouse => "Mouse button",
             Kind::Media => "Media key",
+            Kind::Macro => "Macro: several steps",
             Kind::DpiCycle => "Next CPI level",
             Kind::ScrollUp => "Scroll up",
             Kind::ScrollDown => "Scroll down",
@@ -1600,6 +1724,9 @@ impl Kind {
             Kind::Keyboard => Action::key(0x04),
             Kind::Mouse => Action::MouseButton(1),
             Kind::Media => Action::Media(0xCD),
+            // A macro is not a binding on the mouse; ggez picks the key
+            // the button sends.
+            Kind::Macro => Action::Disabled,
             Kind::DpiCycle => Action::DpiCycle,
             Kind::ScrollUp => Action::ScrollUp,
             Kind::ScrollDown => Action::ScrollDown,

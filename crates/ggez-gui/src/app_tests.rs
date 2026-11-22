@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
+use ggez_service::macros::Mode;
 
 use super::*;
 
@@ -837,4 +838,82 @@ fn a_slider_follows_the_pointer_and_reports_changes() {
         matches!(previews.as_slice(), [Request::Preview(p)] if p.brightness == Some(95)),
         "{previews:?}"
     );
+}
+
+#[test]
+fn a_button_can_be_given_a_macro_and_applied() {
+    let (mut harness, fake, profile) = window("macro");
+    click(&mut harness, "Buttons");
+    click(&mut harness, "Side button 7");
+    // Choose it from the list of what a button can do.
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "What it does")
+        .click();
+    harness.run();
+    harness.get_by_label("Macro: several steps").click();
+    harness.run();
+    assert!(harness.state().draft.has_macro(Button::Grid(7)));
+    assert!(harness.state().is_dirty());
+    harness.get_by_label_contains("works only while ggez is running");
+
+    // What is typed is checked as it is typed.
+    harness
+        .state_mut()
+        .draft
+        .macros
+        .get_mut("g7")
+        .unwrap()
+        .steps = "key:ctrl+c\nhop".into();
+    harness.run();
+    harness.get_by_label_contains("Line 2:");
+    harness
+        .state_mut()
+        .draft
+        .macros
+        .get_mut("g7")
+        .unwrap()
+        .steps = "key:ctrl+c\nwait:80\nkey:ctrl+v".into();
+    click(&mut harness, "Held");
+    assert_eq!(harness.state().draft.macros["g7"].mode, Mode::Repeat);
+
+    click(&mut harness, "Apply to mouse");
+    let saved = Profile::load(&profile).unwrap();
+    assert_eq!(requests(&fake), [Request::Apply(saved.clone())]);
+    let spec = &saved.macros.as_ref().unwrap()["g7"];
+    assert_eq!(spec.mode.as_deref(), Some("repeat"));
+    assert_eq!(spec.steps, ["key:ctrl+c", "wait:80", "key:ctrl+v"]);
+    saved.validate().unwrap();
+}
+
+#[test]
+fn resetting_a_button_takes_its_macro_away() {
+    let (mut harness, _, _) = window("macro-reset");
+    click(&mut harness, "Buttons");
+    click(&mut harness, "Side button 3");
+    harness.state_mut().set_macro(true);
+    harness.run();
+    click(&mut harness, "Reset this button");
+    assert!(!harness.state().draft.has_macro(Button::Grid(3)));
+    assert_eq!(
+        harness.state().draft.buttons.get(Button::Grid(3)),
+        ButtonMap::default().get(Button::Grid(3))
+    );
+}
+
+#[test]
+fn a_macro_with_a_mistake_is_not_sent() {
+    let (mut harness, fake, _) = window("macro-bad");
+    harness.state_mut().tab = Tab::Buttons;
+    harness.state_mut().set_macro(true);
+    harness
+        .state_mut()
+        .draft
+        .macros
+        .get_mut("g1")
+        .unwrap()
+        .steps = "hop".into();
+    harness.run();
+    click(&mut harness, "Apply to mouse");
+    assert!(requests(&fake).is_empty());
+    harness.get_by_label_contains("the macro on g1");
 }

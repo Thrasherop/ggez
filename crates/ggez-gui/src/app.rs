@@ -338,6 +338,17 @@ impl App {
         self.capturing_key = false;
     }
 
+    /// Give the selected button a macro, or take its macro away.
+    fn set_macro(&mut self, on: bool) {
+        let name = self.selected_button.to_string();
+        if on {
+            self.draft.macros.entry(name).or_default();
+        } else {
+            self.draft.macros.remove(&name);
+        }
+        self.capturing_key = false;
+    }
+
     fn set_action(&mut self, action: Action) {
         self.draft.buttons.set(self.selected_button, action);
         self.action_text = action.to_string();
