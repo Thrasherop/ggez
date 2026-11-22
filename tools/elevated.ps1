@@ -59,9 +59,11 @@ try {
             "ok stop-gg" | Set-Content $result
         }
         'start-gg' {
-            # The same arguments GG's own Start menu shortcut uses; without
-            # them it exits at once.
-            Start-Process "$env:ProgramFiles\SteelSeries\GG\SteelSeriesGG.exe" -ArgumentList @(
+            # The same arguments and folder GG's own Start menu shortcut uses.
+            # Without the arguments it exits at once; started from another
+            # folder its window never finishes loading.
+            $gg = "$env:ProgramFiles\SteelSeries\GG"
+            Start-Process "$gg\SteelSeriesGG.exe" -WorkingDirectory $gg -ArgumentList @(
                 '-dataPath="C:\ProgramData\SteelSeries\GG"', '-dbEnv=production')
             "ok start-gg" | Set-Content $result
         }

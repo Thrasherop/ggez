@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
+use ggez_core::protocol::{Illumination, MAX_BRIGHTNESS};
 use ggez_core::{Aerox9, Button, ButtonMap, DefaultLighting, PollingRate, Rgb, Transport, Zone};
 use serde::{Deserialize, Serialize};
 
@@ -24,8 +25,20 @@ pub struct Profile {
     pub polling: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sleep_minutes: Option<u32>,
+    /// Seconds of idle before the lights dim (0 = never).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dim_seconds: Option<u32>,
+    /// How bright the lights are, 0 to 100 percent. The mouse has 16 steps.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub brightness: Option<u32>,
+    /// Turn the lights off while the mouse is moving, to save battery.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub smart_lighting: Option<bool>,
+    /// Lights off, 125 Hz polling and the mouse's own power-saving flag, for
+    /// the longest battery life. Overrides `polling` and the lighting keys
+    /// above while it is on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub battery_saver: Option<bool>,
     /// Lighting shown when the mouse powers on: off, reactive, rainbow or
     /// reactive-rainbow.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -84,6 +97,11 @@ impl Colors {
     }
 }
 
+/// The nearest of the mouse's 16 brightness steps to a percentage.
+pub fn brightness_level(percent: u32) -> u8 {
+    ((percent.min(100) * u32::from(MAX_BRIGHTNESS) + 50) / 100) as u8
+}
+
 pub const DEFAULT_LIGHTING_MODES: [&str; 4] = ["off", "reactive", "rainbow", "reactive-rainbow"];
 
 /// A profile whose every value has been checked and converted.
@@ -91,7 +109,8 @@ struct Checked {
     dpi: Option<(Vec<u32>, usize)>,
     polling: Option<PollingRate>,
     sleep_minutes: Option<u32>,
-    dim_seconds: Option<u32>,
+    illumination: Option<Illumination>,
+    high_efficiency: Option<bool>,
     default_lighting: Option<DefaultLighting>,
     reactive: Option<Option<Rgb>>,
     rainbow: bool,
@@ -153,9 +172,42 @@ impl Profile {
         if let Some(minutes) = self.sleep_minutes {
             ggez_core::protocol::set_sleep_timer(ggez_core::Link::Wired, minutes)?;
         }
-        if let Some(seconds) = self.dim_seconds {
-            ggez_core::protocol::set_dim_timer(ggez_core::Link::Wired, seconds)?;
+        let saving = self.battery_saver == Some(true);
+        // Brightness, smart lighting and the dim timer travel in one command,
+        // so naming any of them sets all three. Turning the battery saver
+        // off sends them too, to bring the lights back.
+        let illumination = if saving {
+            Some(Illumination {
+                brightness: 0,
+                smart: true,
+                dim_seconds: 0,
+            })
+        } else if self.dim_seconds.is_some()
+            || self.brightness.is_some()
+            || self.smart_lighting.is_some()
+            || self.battery_saver.is_some()
+        {
+            let usual = Illumination::default();
+            let percent = self.brightness.unwrap_or(100);
+            if percent > 100 {
+                bail!("brightness must be 0-100 percent, got {percent}");
+            }
+            Some(Illumination {
+                brightness: brightness_level(percent),
+                smart: self.smart_lighting.unwrap_or(usual.smart),
+                dim_seconds: self.dim_seconds.unwrap_or(usual.dim_seconds),
+            })
+        } else {
+            None
+        };
+        if let Some(lights) = illumination {
+            ggez_core::protocol::set_illumination(ggez_core::Link::Wired, lights)?;
         }
+        let polling = if saving {
+            Some(PollingRate::Hz125)
+        } else {
+            polling
+        };
         let default_lighting = self
             .default_lighting
             .as_deref()
@@ -207,7 +259,8 @@ impl Profile {
             dpi,
             polling,
             sleep_minutes: self.sleep_minutes,
-            dim_seconds: self.dim_seconds,
+            illumination,
+            high_efficiency: self.battery_saver,
             default_lighting,
             reactive,
             rainbow,
@@ -233,8 +286,8 @@ impl Profile {
             mouse.set_sleep_timer(minutes)?;
             sent = true;
         }
-        if let Some(seconds) = checked.dim_seconds {
-            mouse.set_dim_timer(seconds)?;
+        if let Some(on) = checked.high_efficiency {
+            mouse.set_high_efficiency(on)?;
             sent = true;
         }
         if let Some(mode) = checked.default_lighting {
@@ -249,19 +302,30 @@ impl Profile {
         Ok(sent)
     }
 
-    /// Send only what the mouse forgets when it powers off: zone colors and
-    /// the reactive color. Returns whether anything was sent.
+    /// Send only the lighting: zone colors and the reactive color, which the
+    /// mouse forgets when it powers off, and brightness. Returns whether
+    /// anything was sent.
     pub fn apply_volatile<T: Transport>(&self, mouse: &mut Aerox9<T>) -> Result<bool> {
         Self::send_lighting(&self.check()?, mouse)
     }
 
     /// Whether the profile has anything [`Profile::apply_volatile`] would send.
     pub fn has_volatile(&self) -> bool {
-        self.reactive.is_some() || self.effect.is_some() || !self.colors.is_empty()
+        self.reactive.is_some()
+            || self.effect.is_some()
+            || !self.colors.is_empty()
+            || self.dim_seconds.is_some()
+            || self.brightness.is_some()
+            || self.smart_lighting.is_some()
+            || self.battery_saver.is_some()
     }
 
     fn send_lighting<T: Transport>(checked: &Checked, mouse: &mut Aerox9<T>) -> Result<bool> {
         let mut sent = false;
+        if let Some(lights) = checked.illumination {
+            mouse.set_illumination(lights)?;
+            sent = true;
+        }
         if let Some(color) = checked.reactive {
             mouse.set_reactive_color(color)?;
             sent = true;
@@ -369,6 +433,54 @@ all = \"red\"
     #[test]
     fn unknown_keys_are_rejected() {
         assert!(Profile::parse("poling = 1000").is_err());
+    }
+
+    #[test]
+    fn the_three_light_settings_travel_in_one_command() {
+        let sent = |text| commands(|p, m| p.apply(m), text);
+        // Naming one fills in the usual values for the others.
+        assert_eq!(
+            sent("dim_seconds = 60"),
+            [vec![0x00, 0x63, 0x0F, 1, 0, 0, 0x60, 0xEA, 0]]
+        );
+        assert_eq!(
+            sent("brightness = 50\nsmart_lighting = true"),
+            [vec![0x00, 0x63, 0x08, 1, 1, 0, 0x30, 0x75, 0]]
+        );
+        assert_eq!(brightness_level(0), 0);
+        assert_eq!(brightness_level(100), 15);
+        assert!(Profile::parse("brightness = 101")
+            .unwrap()
+            .validate()
+            .is_err());
+        // Brightness is lighting, so the helper restores it with the colors.
+        assert_eq!(
+            commands(|p, m| p.apply_volatile(m), "brightness = 100").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn battery_saver_overrides_polling_and_lights_and_gives_them_back() {
+        let sent = |text| commands(|p, m| p.apply(m), text);
+        // What SteelSeries GG sends for High-Efficiency Mode: 125 Hz, the
+        // mouse's own flag, lights off.
+        assert_eq!(
+            sent("polling = 1000\nbrightness = 80\nbattery_saver = true"),
+            [
+                vec![0x00, 0x6B, 0x03],
+                vec![0x00, 0x68, 1],
+                vec![0x00, 0x63, 0, 1, 1, 0, 0, 0, 0]
+            ]
+        );
+        assert_eq!(
+            sent("polling = 1000\nbrightness = 80\nbattery_saver = false"),
+            [
+                vec![0x00, 0x6B, 0x00],
+                vec![0x00, 0x68, 0],
+                vec![0x00, 0x63, 0x0C, 1, 0, 0, 0x30, 0x75, 0]
+            ]
+        );
     }
 
     #[test]

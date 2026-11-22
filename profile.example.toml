@@ -6,6 +6,9 @@ dpi_select = 3                       # active preset, counting from 1
 polling = 1000                       # Hz: 125, 250, 500 or 1000
 sleep_minutes = 5                    # 0-20, 0 = never
 dim_seconds = 30                     # 0-1200, 0 = never
+brightness = 100                     # percent; the mouse has 16 steps
+smart_lighting = false               # lights off while the mouse moves
+battery_saver = false                # lights off, 125 Hz, power-saving mode
 
 # Lighting the mouse shows by itself after power-on:
 # off, reactive, rainbow or reactive-rainbow.

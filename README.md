@@ -25,8 +25,8 @@ ggez closed, or on a computer that has never heard of it.
 | **Buttons** | Rebind all 18 buttons and both scroll directions: keys, shortcuts of up to four keys (Ctrl+Shift+K), mouse buttons, media keys, CPI cycle, or nothing. Bindings live on the mouse, and a key stays held for as long as you hold the button. |
 | **Sensitivity** | Up to five CPI levels, 100-18000. |
 | **Polling rate** | 125, 250, 500 or 1000 Hz. |
-| **Lighting** | A color per zone, the built-in rainbow, a flash on click, and what the mouse shows when no software is driving it. |
-| **Power** | Sleep and dim timers. Battery level and charging state. |
+| **Lighting** | A color per zone, the built-in rainbow, brightness, a flash on click, lights off while the mouse moves, and what the mouse shows when no software is driving it. |
+| **Power** | Sleep and dim timers, and a battery saver (lights off, 125 Hz, the mouse's own power-saving mode). Battery level and charging state. |
 | **Profiles** | Your whole setup is one small text file you can copy between computers. Keep several and switch between them in a click. |
 
 It works through the USB cable and the 2.4 GHz dongle. Bluetooth is not
@@ -60,7 +60,7 @@ ggez reactive red                     (or: ggez reactive off)
 ggez rainbow
 ggez default-lighting off             off, reactive, rainbow, reactive-rainbow
 ggez sleep 5                          minutes, 0-20
-ggez dim 30                           seconds, 0-1200
+ggez dim 30 --brightness 60 --smart   seconds 0-1200, percent, lights off while moving
 ggez buttons g10=key:ctrl+x g11=key:ctrl+c g12=key:ctrl+v
 ggez apply my-profile.toml            everything at once
 ggez autostart enable                 start the helper at login
@@ -145,16 +145,21 @@ mouse, or still a guess. In short:
 
 - Buttons, zone colors, power-on lighting and saving have been checked by a
   person pressing buttons and looking at the mouse.
-- CPI, polling rate and the timers are acknowledged by the mouse and, where
-  compared, match GG's bytes exactly; their effect has not been measured.
+- CPI, polling rate, the timers, brightness and the battery saver are
+  acknowledged by the mouse and, where compared, match GG's bytes exactly;
+  their effect has not been measured.
 - ggez is not in the path your movement and clicks take. It writes settings
   and exits.
 
 ## Not done yet
 
 See the [issues](https://github.com/Thrasherop/ggez/issues). The larger
-gaps: macros, smart illumination, angle snapping and acceleration, lighting
-effects beyond rainbow, Bluetooth, and testing on macOS and Linux.
+gaps: macros, Bluetooth, and testing on macOS and Linux.
+
+Three things GG offers are deliberately left out, because GG does them in
+software on the computer and not on the mouse: angle snapping, acceleration,
+and animated lighting effects other than the built-in rainbow. The mouse
+has no setting for them.
 
 ## Layout
 

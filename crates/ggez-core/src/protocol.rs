@@ -16,6 +16,7 @@ pub const CONFIG_INTERFACE: i32 = 3;
 pub const MAX_DPI_PRESETS: usize = 5;
 pub const MAX_SLEEP_MINUTES: u32 = 20;
 pub const MAX_DIM_SECONDS: u32 = 1200;
+pub const MAX_BRIGHTNESS: u8 = 15;
 
 const WIRELESS_FLAG: u8 = 0x40;
 const BATTERY_CHARGING_FLAG: u8 = 0x80;
@@ -32,6 +33,8 @@ pub enum ProtoError {
     SleepOutOfRange(u32),
     #[error("dim timer must be 0-{MAX_DIM_SECONDS} seconds, got {0}")]
     DimOutOfRange(u32),
+    #[error("brightness must be 0-{MAX_BRIGHTNESS}, got {0}")]
+    BrightnessOutOfRange(u8),
     #[error("invalid color {0:?} (use #rrggbb or a basic color name)")]
     BadColor(String),
     #[error("unexpected battery response {0:02x?}")]
@@ -222,14 +225,48 @@ pub fn set_sleep_timer(link: Link, minutes: u32) -> Result<Vec<u8>, ProtoError> 
     Ok(link.apply(p))
 }
 
-/// Idle time before the LEDs dim. 0 disables dimming.
-pub fn set_dim_timer(link: Link, seconds: u32) -> Result<Vec<u8>, ProtoError> {
-    if seconds > MAX_DIM_SECONDS {
-        return Err(ProtoError::DimOutOfRange(seconds));
+/// How the LEDs behave as a whole. The mouse takes all three in one command,
+/// so changing one means sending the others too.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Illumination {
+    /// 0 (off) to [`MAX_BRIGHTNESS`].
+    pub brightness: u8,
+    /// Turn the LEDs off while the mouse is moving, to save battery.
+    pub smart: bool,
+    /// Idle time before the LEDs dim. 0 disables dimming.
+    pub dim_seconds: u32,
+}
+
+impl Default for Illumination {
+    /// Full brightness, dimming after half a minute, lit while moving.
+    fn default() -> Self {
+        Self {
+            brightness: MAX_BRIGHTNESS,
+            smart: false,
+            dim_seconds: 30,
+        }
     }
-    let mut p = vec![0x23, 0x0F, 0x01, 0x00, 0x00];
-    p.extend(le24(seconds * 1_000));
+}
+
+pub fn set_illumination(link: Link, lights: Illumination) -> Result<Vec<u8>, ProtoError> {
+    if lights.dim_seconds > MAX_DIM_SECONDS {
+        return Err(ProtoError::DimOutOfRange(lights.dim_seconds));
+    }
+    if lights.brightness > MAX_BRIGHTNESS {
+        return Err(ProtoError::BrightnessOutOfRange(lights.brightness));
+    }
+    // The third byte is 1 in everything SteelSeries GG sends; its meaning
+    // is not known.
+    let mut p = vec![0x23, lights.brightness, 0x01, u8::from(lights.smart), 0x00];
+    p.extend(le24(lights.dim_seconds * 1_000));
     Ok(link.apply(p))
+}
+
+/// The mouse's own power-saving flag. SteelSeries GG sets it together with
+/// brightness 0 and 125 Hz polling for its "High-Efficiency Mode"; what the
+/// flag changes by itself has not been measured.
+pub fn set_high_efficiency(link: Link, on: bool) -> Vec<u8> {
+    link.apply(vec![0x28, u8::from(on)])
 }
 
 /// Start the rainbow effect. Setting any zone color stops it.
@@ -377,10 +414,39 @@ mod tests {
         assert!(set_sleep_timer(Wired, 21).is_err());
         // 30 s = 30_000 ms = 0x7530
         assert_eq!(
-            set_dim_timer(Wired, 30).unwrap(),
+            set_illumination(Wired, Illumination::default()).unwrap(),
             [0x23, 0x0F, 0x01, 0x00, 0x00, 0x30, 0x75, 0x00]
         );
-        assert!(set_dim_timer(Wired, 1201).is_err());
+        let lights = |brightness, smart, dim_seconds| Illumination {
+            brightness,
+            smart,
+            dim_seconds,
+        };
+        assert!(set_illumination(Wired, lights(15, false, 1201)).is_err());
+        assert!(set_illumination(Wired, lights(16, false, 30)).is_err());
+    }
+
+    #[test]
+    fn illumination_matches_what_gg_sends() {
+        // Captured from SteelSeries GG over the dongle, dim timer 30 s:
+        // Smart Mode on, then the brightness slider at its middle and lowest.
+        let lights = |brightness, smart| {
+            set_illumination(
+                Wireless,
+                Illumination {
+                    brightness,
+                    smart,
+                    dim_seconds: 30,
+                },
+            )
+            .unwrap()
+        };
+        assert_eq!(lights(15, true), [0x63, 0x0F, 1, 1, 0, 0x30, 0x75, 0]);
+        assert_eq!(lights(4, true), [0x63, 0x04, 1, 1, 0, 0x30, 0x75, 0]);
+        assert_eq!(lights(0, true), [0x63, 0x00, 1, 1, 0, 0x30, 0x75, 0]);
+        // High-Efficiency Mode on and off.
+        assert_eq!(set_high_efficiency(Wireless, true), [0x68, 1]);
+        assert_eq!(set_high_efficiency(Wireless, false), [0x68, 0]);
     }
 
     #[test]

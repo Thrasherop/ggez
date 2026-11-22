@@ -659,3 +659,64 @@ fn the_profile_in_use_is_remembered_between_runs() {
     assert_eq!(app.current_profile.as_deref(), Some("Games"));
     assert_eq!(app.profile_names, ["Games"]);
 }
+
+#[test]
+fn brightness_and_smart_lighting_are_previewed_and_saved() {
+    let (mut harness, fake, _) = window("brightness");
+    click(&mut harness, "Lighting");
+    requests(&fake);
+    harness
+        .get_by_label("Turn the lights off while the mouse is moving")
+        .click();
+    harness.run_steps(4);
+    assert!(harness.state().draft.smart_lighting);
+    let previews = requests(&fake);
+    assert!(
+        matches!(previews.as_slice(), [Request::Preview(p)] if p.smart_lighting == Some(true)),
+        "{previews:?}"
+    );
+
+    harness.state_mut().draft.brightness = 40;
+    click(&mut harness, "Apply to mouse");
+    let applied = requests(&fake);
+    assert!(
+        matches!(applied.as_slice(), [Request::Apply(p)] if p.brightness == Some(40)),
+        "{applied:?}"
+    );
+}
+
+#[test]
+fn battery_saver_explains_itself_on_the_pages_it_overrides() {
+    let (mut harness, fake, _) = window("saver");
+    click(&mut harness, "Power");
+    harness.get_by_label("Use battery saver").click();
+    harness.run_steps(4);
+    assert!(harness.state().draft.battery_saver);
+    click(&mut harness, "Apply to mouse");
+    let applied = requests(&fake);
+    assert!(
+        matches!(applied.as_slice(), [.., Request::Apply(p)] if p.battery_saver == Some(true)),
+        "{applied:?}"
+    );
+
+    click(&mut harness, "Sensitivity");
+    harness.get_by_label_contains("so the mouse uses 125 Hz");
+    click(&mut harness, "Lighting");
+    harness.get_by_label_contains("so the lights stay off");
+}
+
+#[test]
+fn extra_mouse_buttons_can_be_chosen() {
+    let (mut harness, _, _) = window("button6");
+    click(&mut harness, "Buttons");
+    click(&mut harness, "Side button 5");
+    harness.state_mut().set_action(Action::MouseButton(4));
+    harness.run_steps(2);
+    click(&mut harness, "Button 7");
+    assert_eq!(
+        harness.state().draft.buttons.get(Button::Grid(5)),
+        Action::MouseButton(7)
+    );
+    harness.get_by_label_contains("Windows only passes the first five");
+    assert_eq!(view::describe(Action::MouseButton(7)), "Button 7");
+}

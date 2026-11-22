@@ -107,7 +107,9 @@ impl FromStr for Button {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Disabled,
-    /// Mouse button 1-5 (1 left, 2 right, 3 middle, 4 back, 5 forward).
+    /// Mouse button 1-8 (1 left, 2 right, 3 middle, 4 back, 5 forward).
+    /// The mouse reports 6-8 as real buttons, but Windows only passes the
+    /// first five on to programs.
     MouseButton(u8),
     /// Cycle through the DPI presets.
     DpiCycle,
@@ -140,7 +142,8 @@ impl Action {
     }
 }
 
-/// Parses `disabled`, `left`, `right`, `middle`, `back`, `forward`, `dpi`,
+/// Parses `disabled`, `left`, `right`, `middle`, `back`, `forward`,
+/// `button6`-`button8`, `dpi`,
 /// `scroll-up`, `scroll-down`, `key:<name>[+<name>...]` and `media:<name>`.
 impl FromStr for Action {
     type Err = ProtoError;
@@ -155,6 +158,9 @@ impl FromStr for Action {
             "middle" => Action::MouseButton(3),
             "back" => Action::MouseButton(4),
             "forward" => Action::MouseButton(5),
+            "button6" => Action::MouseButton(6),
+            "button7" => Action::MouseButton(7),
+            "button8" => Action::MouseButton(8),
             "dpi" => Action::DpiCycle,
             "scroll-up" => Action::ScrollUp,
             "scroll-down" => Action::ScrollDown,
@@ -332,7 +338,8 @@ impl fmt::Display for Action {
             Action::MouseButton(2) => f.write_str("right"),
             Action::MouseButton(3) => f.write_str("middle"),
             Action::MouseButton(4) => f.write_str("back"),
-            Action::MouseButton(_) => f.write_str("forward"),
+            Action::MouseButton(5) => f.write_str("forward"),
+            Action::MouseButton(n) => write!(f, "button{n}"),
             Action::DpiCycle => f.write_str("dpi"),
             Action::ScrollUp => f.write_str("scroll-up"),
             Action::ScrollDown => f.write_str("scroll-down"),
@@ -524,9 +531,15 @@ mod tests {
             "key:0x64",
             "media:play-pause",
             "disabled",
+            "forward",
+            "button6",
+            "button8",
         ] {
             assert_eq!(text.parse::<Action>().unwrap().to_string(), text);
         }
+        // Seen in the mouse's own reports: kinds 6-8 press button bits 6-8.
+        assert_eq!("button7".parse::<Action>().unwrap().encode()[0], 0x07);
+        assert!("button9".parse::<Action>().is_err());
         for name in key_names() {
             assert!(format!("key:{name}").parse::<Action>().is_ok(), "{name}");
         }

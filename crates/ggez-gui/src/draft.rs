@@ -30,6 +30,12 @@ pub struct Draft {
     pub polling: u32,
     pub sleep_minutes: u32,
     pub dim_seconds: u32,
+    /// Brightness of the lights in percent.
+    pub brightness: u32,
+    /// Lights off while the mouse is moving.
+    pub smart_lighting: bool,
+    /// Lights off, 125 Hz and the mouse's own power-saving flag.
+    pub battery_saver: bool,
     /// Index into [`DEFAULT_LIGHTING_MODES`].
     pub default_lighting: usize,
     pub effect: Effect,
@@ -48,6 +54,9 @@ impl Default for Draft {
             polling: 1000,
             sleep_minutes: 5,
             dim_seconds: 30,
+            brightness: 100,
+            smart_lighting: false,
+            battery_saver: false,
             default_lighting: 2,
             effect: Effect::Rainbow,
             zones: [[255, 80, 0], [255, 80, 0], [255, 80, 0]],
@@ -95,6 +104,11 @@ impl Draft {
         if let Some(seconds) = profile.dim_seconds {
             draft.dim_seconds = seconds.min(1200);
         }
+        if let Some(percent) = profile.brightness {
+            draft.brightness = percent.min(100);
+        }
+        draft.smart_lighting = profile.smart_lighting.unwrap_or(draft.smart_lighting);
+        draft.battery_saver = profile.battery_saver.unwrap_or(draft.battery_saver);
         if let Some(mode) = profile
             .default_lighting
             .as_deref()
@@ -167,6 +181,9 @@ impl Draft {
             polling: Some(self.polling),
             sleep_minutes: Some(self.sleep_minutes),
             dim_seconds: Some(self.dim_seconds),
+            brightness: Some(self.brightness),
+            smart_lighting: Some(self.smart_lighting),
+            battery_saver: Some(self.battery_saver),
             default_lighting: Some(DEFAULT_LIGHTING_MODES[self.default_lighting].to_string()),
             effect: Some(effect.to_string()),
             reactive: Some(self.reactive.map_or_else(|| "off".to_string(), color_text)),
@@ -211,6 +228,9 @@ mod tests {
             polling: 500,
             sleep_minutes: 0,
             dim_seconds: 600,
+            brightness: 40,
+            smart_lighting: true,
+            battery_saver: true,
             default_lighting: 0,
             effect: Effect::Static,
             zones: [[1, 2, 3], [4, 5, 6], [7, 8, 9]],

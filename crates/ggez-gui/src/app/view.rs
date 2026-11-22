@@ -282,54 +282,53 @@ impl App {
         let line_y = ui.max_rect().top();
         ui.painter()
             .hline(ui.max_rect().x_range(), line_y, Stroke::new(1.0, LINE));
-        ui.horizontal_centered(|ui| {
-            match &self.notice {
-                Notice::None if self.is_dirty() => {
-                    theme::dot(ui, WARNING);
-                    ui.label(
-                        RichText::new("You have changes that are not on the mouse yet.")
-                            .color(WARNING),
-                    );
-                }
-                Notice::None => {}
-                Notice::Working(text) => {
-                    ui.spinner();
-                    ui.label(text);
-                }
-                Notice::Good(text) => {
-                    theme::dot(ui, GOOD);
-                    ui.label(RichText::new(text).color(GOOD));
-                }
-                Notice::Bad(text) => {
-                    theme::dot(ui, DANGER);
-                    ui.label(RichText::new(text).color(DANGER));
-                }
-            }
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let can_apply = self.connected() && !self.applying;
-                let apply = theme::primary_button(ui, can_apply, "Apply to mouse");
-                let apply = if can_apply {
-                    apply
+        // The buttons are laid out first so that a long message wraps in
+        // the space left over instead of running underneath them.
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let can_apply = self.connected() && !self.applying;
+            let apply = theme::primary_button(ui, can_apply, "Apply to mouse");
+            let apply = if can_apply {
+                apply
+            } else {
+                apply.on_hover_text(if self.applying {
+                    "Still applying the previous changes."
                 } else {
-                    apply.on_hover_text(if self.applying {
-                        "Still applying the previous changes."
-                    } else {
-                        "Connect the mouse first."
-                    })
+                    "Connect the mouse first."
+                })
+            };
+            if can_apply && apply.clicked() {
+                self.request_apply();
+            }
+            let revert = egui::Button::new("Revert").min_size(vec2(84.0, 38.0));
+            let revert = ui
+                .add_enabled(self.draft != self.applied, revert)
+                .on_hover_text("Discard changes made since the last apply.");
+            theme::focus_ring(ui, &revert, revert.rect, theme::CONTROL_RADIUS);
+            if revert.clicked() {
+                self.draft = self.applied.clone();
+                self.select_button(self.selected_button);
+                self.notice = Notice::None;
+                self.preview_lighting();
+            }
+            ui.add_space(8.0);
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                let message = |ui: &mut Ui, color, text: &str| {
+                    theme::dot(ui, color);
+                    ui.add(egui::Label::new(RichText::new(text).color(color)).wrap());
                 };
-                if can_apply && apply.clicked() {
-                    self.request_apply();
-                }
-                let revert = egui::Button::new("Revert").min_size(vec2(84.0, 38.0));
-                if ui
-                    .add_enabled(self.draft != self.applied, revert)
-                    .on_hover_text("Discard changes made since the last apply.")
-                    .clicked()
-                {
-                    self.draft = self.applied.clone();
-                    self.select_button(self.selected_button);
-                    self.notice = Notice::None;
-                    self.preview_lighting();
+                match &self.notice {
+                    Notice::None if self.is_dirty() => message(
+                        ui,
+                        WARNING,
+                        "You have changes that are not on the mouse yet.",
+                    ),
+                    Notice::None => {}
+                    Notice::Working(text) => {
+                        ui.spinner();
+                        ui.label(text);
+                    }
+                    Notice::Good(text) => message(ui, GOOD, text),
+                    Notice::Bad(text) => message(ui, DANGER, text),
                 }
             });
         });
@@ -454,6 +453,14 @@ impl App {
             if let Some(hz) = theme::segmented(ui, self.draft.polling, &options) {
                 self.draft.polling = hz;
             }
+            if self.draft.battery_saver {
+                ui.add_space(4.0);
+                theme::callout(
+                    ui,
+                    WARNING,
+                    "Battery saver is on (see Power), so the mouse uses 125 Hz until you turn it off.",
+                );
+            }
         });
     }
 
@@ -542,12 +549,21 @@ impl App {
                         "Middle click",
                         "Back",
                         "Forward",
+                        "Button 6",
+                        "Button 7",
+                        "Button 8",
                     ]) {
                         if choice(ui, current == number, name) {
                             self.set_action(Action::MouseButton(number));
                         }
                     }
                 });
+                if current > 5 {
+                    hint(
+                        ui,
+                        "The mouse sends buttons 6 to 8 as real mouse buttons, but Windows only passes the first five on to programs. They are useful on Linux.",
+                    );
+                }
             }
             Action::Media(current) => {
                 ui.horizontal_wrapped(|ui| {
@@ -903,6 +919,48 @@ impl App {
         });
 
         ui.add_space(6.0);
+        theme::card(ui, |ui| {
+            theme::card_title(
+                ui,
+                "Brightness",
+                "How bright the lights are. Stored on the mouse.",
+            );
+            ui.horizontal(|ui| {
+                changed |= ui
+                    .add(
+                        egui::Slider::new(&mut self.draft.brightness, 0..=100)
+                            .step_by(5.0)
+                            .show_value(false),
+                    )
+                    .on_hover_text("The mouse has 16 brightness steps.")
+                    .changed();
+                let text = match self.draft.brightness {
+                    0 => "Off".to_string(),
+                    percent => format!("{percent}%"),
+                };
+                ui.label(RichText::new(text).font(FontId::new(15.0, theme::strong())));
+            });
+            ui.add_space(4.0);
+            changed |= theme::toggle(
+                ui,
+                &mut self.draft.smart_lighting,
+                "Turn the lights off while the mouse is moving",
+            );
+            hint(
+                ui,
+                "Your hand covers most of the lights while you use the mouse. They come back when it stops.",
+            );
+            if self.draft.battery_saver {
+                ui.add_space(4.0);
+                theme::callout(
+                    ui,
+                    WARNING,
+                    "Battery saver is on (see Power), so the lights stay off until you turn it off.",
+                );
+            }
+        });
+
+        ui.add_space(6.0);
         ui.columns(2, |columns| {
             theme::card(&mut columns[0], |ui| {
                 theme::card_title(ui, "Click flash", "Flash a color every time you click.");
@@ -985,6 +1043,21 @@ impl App {
                 }
                 Status::Connected { .. } => hint(ui, "The mouse did not report its battery level."),
                 _ => hint(ui, "Connect the mouse to see its battery level."),
+            }
+        });
+        ui.add_space(6.0);
+        theme::card(ui, |ui| {
+            theme::card_title(
+                ui,
+                "Battery saver",
+                "For the longest battery life: lights off, 125 Hz polling, and the mouse's own power-saving mode.",
+            );
+            theme::toggle(ui, &mut self.draft.battery_saver, "Use battery saver");
+            if self.draft.battery_saver {
+                hint(
+                    ui,
+                    "Your polling rate and lighting settings are kept and come back when you turn this off.",
+                );
             }
         });
         ui.add_space(6.0);
@@ -1640,7 +1713,8 @@ pub fn describe(action: Action) -> String {
         Action::MouseButton(2) => "Right click".into(),
         Action::MouseButton(3) => "Middle click".into(),
         Action::MouseButton(4) => "Back".into(),
-        Action::MouseButton(_) => "Forward".into(),
+        Action::MouseButton(5) => "Forward".into(),
+        Action::MouseButton(n) => format!("Button {n}"),
         Action::DpiCycle => "Next CPI level".into(),
         Action::ScrollUp => "Scroll up".into(),
         Action::ScrollDown => "Scroll down".into(),

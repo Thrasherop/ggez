@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use ggez_core::protocol::Illumination;
 use ggez_core::transport::{list_steelseries, listen, HidTransport};
 use ggez_core::{
     Aerox9, Button, ButtonMap, DefaultLighting, Link, MockTransport, PollingRate, Rgb, Transport,
@@ -97,8 +98,17 @@ enum Command {
     DefaultLighting { mode: LightingArg },
     /// Minutes of idle before the mouse sleeps (0-20, 0 = never).
     Sleep { minutes: u32 },
-    /// Seconds of idle before the LEDs dim (0-1200, 0 = never).
-    Dim { seconds: u32 },
+    /// Seconds of idle before the LEDs dim (0-1200, 0 = never), with their
+    /// brightness and smart lighting: the mouse takes all three together.
+    Dim {
+        seconds: u32,
+        /// Brightness in percent (0-100).
+        #[arg(long, default_value_t = 100)]
+        brightness: u32,
+        /// Turn the LEDs off while the mouse is moving.
+        #[arg(long)]
+        smart: bool,
+    },
     /// Rebind buttons, e.g. `ggez buttons g1=key:f13 g2=key:ctrl+shift+k g3=disabled`.
     ///
     /// Buttons: left, right, middle, tilt-left, tilt-right, dpi, g1-g12 (side
@@ -448,7 +458,20 @@ fn run<T: Transport>(mouse: &mut Aerox9<T>, cli: &Cli) -> Result<()> {
             }
         }
         Command::Sleep { minutes } => mouse.set_sleep_timer(*minutes)?,
-        Command::Dim { seconds } => mouse.set_dim_timer(*seconds)?,
+        Command::Dim {
+            seconds,
+            brightness,
+            smart,
+        } => {
+            if *brightness > 100 {
+                bail!("brightness must be 0-100 percent, got {brightness}");
+            }
+            mouse.set_illumination(Illumination {
+                brightness: ggez_service::profile::brightness_level(*brightness),
+                smart: *smart,
+                dim_seconds: *seconds,
+            })?
+        }
     }
     if !cli.no_save {
         mouse.save()?;

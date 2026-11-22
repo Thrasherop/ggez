@@ -15,10 +15,17 @@ const READ_TIMEOUT_MS: i32 = 200;
 const REPLY_WAITS_MS: [u64; 12] = [150, 150, 150, 150, 150, 150, 300, 300, 300, 700, 700, 700];
 /// Upper bound on stale input reports discarded before a command.
 const MAX_STALE_REPORTS: usize = 256;
+/// Changing the polling rate makes the mouse drop its radio link and join
+/// the dongle again. Measured: 2 seconds beside the dongle, more than 9
+/// through two walls. The command that follows waits this long for it.
+const RELINK_WAIT: Duration = Duration::from_secs(20);
 
 pub struct Aerox9<T: Transport> {
     transport: T,
     link: Link,
+    /// The last command made the mouse rejoin the dongle, so the next one
+    /// should outwait "no link" answers instead of reporting them.
+    relinking: bool,
 }
 
 #[cfg(feature = "hid")]
@@ -32,7 +39,11 @@ impl Aerox9<crate::transport::HidTransport> {
 
 impl<T: Transport> Aerox9<T> {
     pub fn new(transport: T, link: Link) -> Self {
-        Self { transport, link }
+        Self {
+            transport,
+            link,
+            relinking: false,
+        }
     }
 
     pub fn link(&self) -> Link {
@@ -95,29 +106,38 @@ impl<T: Transport> Aerox9<T> {
         let command = payload[0];
         let mut buf = [0u8; 64];
         let mut link_down = false;
+        let patient = std::mem::take(&mut self.relinking);
+        let give_up = Instant::now() + RELINK_WAIT;
         self.drain()?;
-        for wait in REPLY_WAITS_MS {
-            self.write(payload.clone())?;
-            let deadline = Instant::now() + Duration::from_millis(wait);
-            loop {
-                let left = deadline.saturating_duration_since(Instant::now());
-                if left.is_zero() {
-                    break;
+        loop {
+            for wait in REPLY_WAITS_MS {
+                self.write(payload.clone())?;
+                let deadline = Instant::now() + Duration::from_millis(wait);
+                loop {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        break;
+                    }
+                    let n = self
+                        .transport
+                        .read(&mut buf, left.as_millis().max(1) as i32)?;
+                    if n == 0 {
+                        break;
+                    }
+                    if is_reply(&buf[..n]) {
+                        return Ok(buf[..n].to_vec());
+                    }
+                    // The dongle answers `40 ff` itself when it has no radio
+                    // link to the mouse (switched off, asleep, out of range,
+                    // or rejoining after a polling rate change).
+                    if n >= 2 && buf[..2] == [0x40, 0xFF] {
+                        link_down = true;
+                    }
                 }
-                let n = self
-                    .transport
-                    .read(&mut buf, left.as_millis().max(1) as i32)?;
-                if n == 0 {
-                    break;
-                }
-                if is_reply(&buf[..n]) {
-                    return Ok(buf[..n].to_vec());
-                }
-                // The dongle answers `40 ff` itself when it has no radio link
-                // to the mouse (switched off, asleep or out of range).
-                if n >= 2 && buf[..2] == [0x40, 0xFF] {
-                    link_down = true;
-                }
+            }
+            // Only a link we know is coming back is worth waiting for.
+            if !(patient && link_down && Instant::now() < give_up) {
+                break;
             }
         }
         Err(if link_down {
@@ -179,7 +199,9 @@ impl<T: Transport> Aerox9<T> {
     }
 
     pub fn set_polling_rate(&mut self, rate: PollingRate) -> Result<()> {
-        self.send(protocol::set_polling_rate(self.link, rate))
+        self.send(protocol::set_polling_rate(self.link, rate))?;
+        self.relinking = self.link == Link::Wireless;
+        Ok(())
     }
 
     pub fn set_zone_color(&mut self, zone: Zone, color: Rgb) -> Result<()> {
@@ -194,8 +216,12 @@ impl<T: Transport> Aerox9<T> {
         self.send(protocol::set_sleep_timer(self.link, minutes)?)
     }
 
-    pub fn set_dim_timer(&mut self, seconds: u32) -> Result<()> {
-        self.send(protocol::set_dim_timer(self.link, seconds)?)
+    pub fn set_illumination(&mut self, lights: protocol::Illumination) -> Result<()> {
+        self.send(protocol::set_illumination(self.link, lights)?)
+    }
+
+    pub fn set_high_efficiency(&mut self, on: bool) -> Result<()> {
+        self.send(protocol::set_high_efficiency(self.link, on))
     }
 
     pub fn rainbow_effect(&mut self) -> Result<()> {
@@ -265,6 +291,63 @@ mod tests {
                 status: 0xFF
             })
         ));
+    }
+
+    /// A dongle that answers "no link" to the first `down_for` commands sent
+    /// after a polling rate change, as the real one does while the mouse
+    /// rejoins it.
+    struct Rejoining {
+        down_for: usize,
+        reply: Option<Vec<u8>>,
+    }
+
+    impl Transport for Rejoining {
+        fn write(&mut self, packet: &[u8]) -> std::result::Result<(), crate::TransportError> {
+            let command = packet[1];
+            self.reply = Some(if command == 0x6B || self.down_for == 0 {
+                vec![command, 0x00]
+            } else {
+                self.down_for -= 1;
+                vec![0x40, 0xFF]
+            });
+            Ok(())
+        }
+
+        fn read(
+            &mut self,
+            buf: &mut [u8],
+            timeout_ms: i32,
+        ) -> std::result::Result<usize, crate::TransportError> {
+            if timeout_ms == 0 {
+                return Ok(0);
+            }
+            Ok(self.reply.take().map_or(0, |r| {
+                buf[..r.len()].copy_from_slice(&r);
+                r.len()
+            }))
+        }
+    }
+
+    #[test]
+    fn the_command_after_a_polling_change_waits_for_the_mouse_to_rejoin() {
+        // More "no link" answers than one round of resends covers.
+        let down_for = REPLY_WAITS_MS.len() + 5;
+        let rejoining = |down_for| Rejoining {
+            down_for,
+            reply: None,
+        };
+        let mut m = Aerox9::new(rejoining(down_for), Link::Wireless);
+        m.set_polling_rate(PollingRate::Hz500).unwrap();
+        m.save().unwrap();
+
+        // Without a polling change the same silence means the mouse is away.
+        let mut m = Aerox9::new(rejoining(down_for), Link::Wireless);
+        assert!(matches!(m.save(), Err(Error::Offline)));
+
+        // Over the cable there is no radio link to wait for.
+        let mut m = Aerox9::new(rejoining(0), Link::Wired);
+        m.set_polling_rate(PollingRate::Hz500).unwrap();
+        assert!(!m.relinking);
     }
 
     #[test]
