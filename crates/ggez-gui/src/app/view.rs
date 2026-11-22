@@ -282,6 +282,8 @@ impl App {
                 "CPI levels",
                 "The mouse holds up to five. The button behind the wheel steps through them.",
             );
+            cpi_scale(ui, &self.draft.dpi, self.draft.dpi_selected);
+            ui.add_space(4.0);
             let mut remove = None;
             let count = self.draft.dpi.len();
             for index in 0..count {
@@ -1242,6 +1244,56 @@ fn battery_bar(ui: &mut Ui, percent: u8, charging: bool) {
     ui.painter()
         .rect_filled(filled, CornerRadius::same(3), color);
     response.on_hover_text("Battery level, in steps of 5%");
+}
+
+/// All the CPI levels on one line, so their spread can be seen at a glance.
+/// The line is logarithmic, like the sliders: each doubling is the same
+/// distance.
+fn cpi_scale(ui: &mut Ui, levels: &[u32], active: usize) {
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(ui.available_width().min(640.0), 58.0), Sense::hover());
+    let rail = rect.left() + 14.0..=rect.right() - 14.0;
+    let x_of = |cpi: u32| {
+        let t = ((cpi as f32).ln() - 100f32.ln()) / (18_000f32.ln() - 100f32.ln());
+        egui::lerp(rail.clone(), t.clamp(0.0, 1.0))
+    };
+    let y = rect.top() + 18.0;
+    ui.painter()
+        .hline(rail.clone(), y, Stroke::new(2.0, RAISED));
+    for tick in [100u32, 200, 400, 800, 1600, 3200, 6400, 18_000] {
+        let x = x_of(tick);
+        ui.painter().line_segment(
+            [pos2(x, y + 5.0), pos2(x, y + 10.0)],
+            Stroke::new(1.0, LINE),
+        );
+        ui.painter().text(
+            pos2(x, y + 22.0),
+            Align2::CENTER_CENTER,
+            tick.to_string(),
+            FontId::proportional(10.5),
+            TEXT_FAINT,
+        );
+    }
+    // Draw the active level last so it sits on top of any it overlaps.
+    let mut order: Vec<usize> = (0..levels.len()).collect();
+    order.sort_by_key(|&i| i == active);
+    for i in order {
+        let centre = pos2(x_of(levels[i]), y);
+        let (fill, ink) = if i == active {
+            (ACCENT, theme::ON_ACCENT)
+        } else {
+            (theme::RAISED_HOVER, TEXT)
+        };
+        ui.painter().circle_filled(centre, 10.0, CARD);
+        ui.painter().circle_filled(centre, 8.5, fill);
+        ui.painter().text(
+            centre,
+            Align2::CENTER_CENTER,
+            (i + 1).to_string(),
+            FontId::new(11.0, theme::strong()),
+            ink,
+        );
+    }
 }
 
 /// The marker at the start of a CPI row: shows which level is active and
