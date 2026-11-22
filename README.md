@@ -107,11 +107,12 @@ cargo build --release
 That needs Rust 1.88 or newer. On Linux also install
 `libudev-dev libxkbcommon-dev libwayland-dev libxcb-render0-dev
 libxcb-shape0-dev libxcb-xfixes0-dev`, and give yourself access to the
-device with a udev rule:
+device with the udev rule in
+[packaging/linux/70-ggez.rules](packaging/linux/70-ggez.rules):
 
 ```
-# /etc/udev/rules.d/70-ggez.rules
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="185a|1858|1876|1874", TAG+="uaccess"
+sudo cp packaging/linux/70-ggez.rules /etc/udev/rules.d/
+sudo udevadm control --reload && sudo udevadm trigger
 ```
 
 ## How it works, and how sure we are

@@ -1,0 +1,5 @@
+# Lets the logged-in user configure SteelSeries Aerox 9 Wireless mice with
+# ggez, without root. Install with:
+#   sudo cp 70-ggez.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload && sudo udevadm trigger
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="185a|1858|1876|1874", TAG+="uaccess"
