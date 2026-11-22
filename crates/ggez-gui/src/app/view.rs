@@ -103,7 +103,8 @@ impl App {
                     .color(ACCENT),
             );
         });
-        ui.add_space(18.0);
+        ui.add_space(14.0);
+        self.profile_picker(ui);
 
         for (tab, name) in Tab::ALL {
             if nav_item(ui, self.tab == tab, tab, name) {
@@ -111,6 +112,101 @@ impl App {
                 self.capturing_key = false;
             }
         }
+    }
+
+    /// The saved profiles: which one is in use, switching to another, and
+    /// saving the current settings under a new name.
+    fn profile_picker(&mut self, ui: &mut Ui) {
+        if self.store.is_none() {
+            return;
+        }
+        ui.horizontal(|ui| {
+            ui.add_space(6.0);
+            ui.label(RichText::new("Profile").color(TEXT_FAINT).size(11.5));
+        });
+        let shown = self
+            .current_profile
+            .clone()
+            .unwrap_or_else(|| "Not saved".to_string());
+        let opener = theme::dropdown_button(ui, &shown, ui.available_width())
+            .on_hover_text("Switch between saved setups, or save this one.");
+        let popup = ui.id().with("profile-picker");
+        if opener.clicked() {
+            ui.memory_mut(|memory| memory.toggle_popup(popup));
+        }
+        let mut switch_to = None;
+        let mut save_as = None;
+        egui::popup_below_widget(
+            ui,
+            popup,
+            &opener,
+            egui::PopupCloseBehavior::CloseOnClickOutside,
+            |ui| {
+                ui.set_min_width(220.0);
+                if self.profile_names.is_empty() {
+                    hint(ui, "No saved profiles yet.");
+                }
+                for name in &self.profile_names {
+                    let current = self.current_profile.as_deref() == Some(name.as_str());
+                    ui.horizontal(|ui| {
+                        if ui
+                            .selectable_label(current, name)
+                            .on_hover_text("Load this profile and send it to the mouse.")
+                            .clicked()
+                        {
+                            switch_to = Some(name.clone());
+                        }
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new("Delete").color(TEXT_FAINT).size(12.0),
+                                    )
+                                    .frame(false),
+                                )
+                                .on_hover_text(format!("Delete {name}"))
+                                .clicked()
+                            {
+                                self.confirm_delete_profile = Some(name.clone());
+                            }
+                        });
+                    });
+                }
+                ui.separator();
+                ui.label(
+                    RichText::new("Save these settings as")
+                        .color(TEXT_DIM)
+                        .size(12.5),
+                );
+                ui.horizontal(|ui| {
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut self.new_profile_name)
+                            .hint_text("Name, such as Work")
+                            .desired_width(140.0),
+                    );
+                    let entered =
+                        field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                    let wanted = !self.new_profile_name.trim().is_empty();
+                    if (ui.add_enabled(wanted, egui::Button::new("Save")).clicked() || entered)
+                        && wanted
+                    {
+                        save_as = Some(self.new_profile_name.clone());
+                    }
+                });
+            },
+        );
+        if let Some(name) = switch_to {
+            ui.memory_mut(|memory| memory.close_popup());
+            self.switch_profile(&name);
+        }
+        if let Some(name) = save_as {
+            ui.memory_mut(|memory| memory.close_popup());
+            self.save_profile_as(&name);
+        }
+        if self.confirm_delete_profile.is_some() {
+            ui.memory_mut(|memory| memory.close_popup());
+        }
+        ui.add_space(14.0);
     }
 
     /// Which mouse this is and how it is doing.
@@ -1089,6 +1185,37 @@ impl App {
                     {
                         self.confirm_no_left_click = false;
                         self.apply();
+                    }
+                });
+            });
+        }
+        if let Some(name) = self.confirm_delete_profile.clone() {
+            egui::Modal::new(egui::Id::new("delete-profile")).show(ctx, |ui| {
+                ui.set_width(360.0);
+                ui.label(
+                    RichText::new(format!("Delete {name}?"))
+                        .font(FontId::new(18.0, theme::strong())),
+                );
+                ui.label(
+                    RichText::new(
+                        "The saved profile is removed. The mouse keeps whatever settings it has now.",
+                    )
+                    .color(TEXT_DIM),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if theme::button(ui, "Keep it").clicked() {
+                        self.confirm_delete_profile = None;
+                    }
+                    if ui
+                        .add(
+                            egui::Button::new(RichText::new("Delete profile").color(DANGER))
+                                .min_size(vec2(0.0, 34.0)),
+                        )
+                        .clicked()
+                    {
+                        self.confirm_delete_profile = None;
+                        self.delete_profile(&name);
                     }
                 });
             });

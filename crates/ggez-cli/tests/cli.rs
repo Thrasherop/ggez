@@ -136,3 +136,66 @@ fn mistakes_are_explained_and_send_nothing() {
     assert!(ggez_error(&["--dry-run", "wired", "buttons", "g1"]).contains("button=action"));
     assert!(ggez_error(&["--dry-run", "wired", "battery"]).contains("cannot be dry-run"));
 }
+
+/// Runs `ggez` with its settings folder redirected to a scratch folder, on
+/// whichever system the tests run on. Returns (succeeded, stdout, stderr).
+fn ggez_in(home: &std::path::Path, args: &[&str]) -> (bool, String, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_ggez"))
+        .args(args)
+        .env("APPDATA", home)
+        .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home)
+        .output()
+        .expect("ggez runs");
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn named_profiles_can_be_saved_listed_used_and_deleted() {
+    let home = std::env::temp_dir().join(format!("ggez-cli-profiles-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(&home).unwrap();
+
+    // Nothing to save before any settings exist.
+    let (ok, _, error) = ggez_in(&home, &["profile", "save", "Work"]);
+    assert!(!ok && error.contains("no settings to save yet"), "{error}");
+
+    // Put a profile where ggez keeps the one in use.
+    let (_, path, _) = ggez_in(&home, &["profile-path"]);
+    let active = std::path::PathBuf::from(path.trim());
+    assert!(
+        active.starts_with(&home),
+        "{active:?} is not under {home:?}"
+    );
+    std::fs::create_dir_all(active.parent().unwrap()).unwrap();
+    std::fs::write(&active, "polling = 250\n").unwrap();
+
+    assert!(ggez_in(&home, &["profile", "save", "Work"]).0);
+    std::fs::write(&active, "polling = 1000\n").unwrap();
+    assert!(ggez_in(&home, &["profile", "save", "Games"]).0);
+    let (_, list, _) = ggez_in(&home, &["profile", "list"]);
+    assert_eq!(list.lines().collect::<Vec<_>>(), ["* Games", "  Work"]);
+
+    // A dry run shows what "use" would send and changes nothing on disk.
+    let (ok, packets, _) = ggez_in(&home, &["--dry-run", "wired", "profile", "use", "Work"]);
+    assert!(ok);
+    assert_eq!(
+        packets.lines().collect::<Vec<_>>(),
+        ["00 2b 02", "00 11 00"]
+    );
+    let (_, list, _) = ggez_in(&home, &["profile", "list"]);
+    assert!(list.contains("* Games"), "{list}");
+
+    let (ok, _, error) = ggez_in(&home, &["--dry-run", "wired", "profile", "use", "Nope"]);
+    assert!(!ok && error.contains("no profile called"), "{error}");
+    let (ok, _, error) = ggez_in(&home, &["profile", "save", "a/b"]);
+    assert!(!ok && error.contains("cannot contain"), "{error}");
+
+    assert!(ggez_in(&home, &["profile", "delete", "Games"]).0);
+    let (_, list, _) = ggez_in(&home, &["profile", "list"]);
+    assert_eq!(list.lines().collect::<Vec<_>>(), ["  Work"]);
+}

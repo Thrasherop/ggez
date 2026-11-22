@@ -546,3 +546,116 @@ fn custom_controls_work_from_the_keyboard() {
     harness.run();
     assert_eq!(harness.state().autostart, Ok(true));
 }
+
+#[test]
+fn settings_can_be_saved_as_named_profiles_and_switched() {
+    let (mut harness, fake, profile) = window("profiles");
+    let store = Store::new(profile.parent().unwrap().to_path_buf());
+
+    // Save the factory settings as "Work".
+    harness.state_mut().save_profile_as("Work");
+    assert_eq!(harness.state().current_profile.as_deref(), Some("Work"));
+    assert_eq!(store.current().as_deref(), Some("Work"));
+    assert!(
+        requests(&fake).is_empty(),
+        "saving sends nothing to the mouse"
+    );
+
+    // Change something and save that as "Games".
+    click(&mut harness, "250 Hz");
+    harness.state_mut().save_profile_as("Games");
+    assert_eq!(harness.state().profile_names, ["Games", "Work"]);
+    assert_eq!(store.load("Games").unwrap().polling, Some(250));
+    assert_eq!(store.load("Work").unwrap().polling, Some(1000));
+
+    // Switching loads the profile and sends it to the mouse.
+    harness.state_mut().switch_profile("Work");
+    harness.run_steps(2);
+    assert_eq!(harness.state().draft.polling, 1000);
+    assert_eq!(
+        requests(&fake),
+        [Request::Apply(store.load("Work").unwrap())]
+    );
+    assert_eq!(store.current().as_deref(), Some("Work"));
+}
+
+#[test]
+fn applying_updates_the_profile_in_use() {
+    let (mut harness, _, profile) = window("profile-follows");
+    let store = Store::new(profile.parent().unwrap().to_path_buf());
+    harness.state_mut().save_profile_as("Work");
+    click(&mut harness, "500 Hz");
+    assert_eq!(store.load("Work").unwrap().polling, Some(1000));
+    click(&mut harness, "Apply to mouse");
+    assert_eq!(store.load("Work").unwrap().polling, Some(500));
+}
+
+#[test]
+fn the_picker_lists_profiles_and_switches_on_click() {
+    let (mut harness, fake, _) = window("picker");
+    harness.state_mut().save_profile_as("Work");
+    click(&mut harness, "125 Hz");
+    harness.state_mut().save_profile_as("Games");
+    harness.run();
+    requests(&fake);
+
+    // The picker shows the profile in use; open it and choose the other.
+    harness.get_by_label("Games").click();
+    harness.run();
+    harness.get_by_label("Work").click();
+    harness.run_steps(4);
+    assert_eq!(harness.state().current_profile.as_deref(), Some("Work"));
+    assert_eq!(harness.state().draft.polling, 1000);
+    assert_eq!(requests(&fake).len(), 1);
+}
+
+#[test]
+fn a_new_profile_can_be_saved_from_the_picker() {
+    let (mut harness, _, _) = window("picker-save");
+    harness.get_by_label("Not saved").click();
+    harness.run();
+    harness.state_mut().new_profile_name = "  Weekend  ".into();
+    harness.run();
+    click(&mut harness, "Save");
+    assert_eq!(harness.state().current_profile.as_deref(), Some("Weekend"));
+    assert_eq!(harness.state().profile_names, ["Weekend"]);
+    harness.get_by_label("Saved as Weekend.");
+}
+
+#[test]
+fn a_bad_profile_name_is_explained() {
+    let (mut harness, _, _) = window("bad-name");
+    harness.state_mut().save_profile_as("work/play");
+    harness.run();
+    assert!(harness.state().profile_names.is_empty());
+    assert!(
+        matches!(&harness.state().notice, Notice::Bad(text) if text.contains("cannot contain"))
+    );
+}
+
+#[test]
+fn deleting_a_profile_asks_first_and_leaves_the_settings() {
+    let (mut harness, fake, _) = window("delete-profile");
+    harness.state_mut().save_profile_as("Work");
+    harness.state_mut().confirm_delete_profile = Some("Work".into());
+    harness.run();
+    click(&mut harness, "Keep it");
+    assert_eq!(harness.state().profile_names, ["Work"]);
+
+    harness.state_mut().confirm_delete_profile = Some("Work".into());
+    harness.run();
+    click(&mut harness, "Delete profile");
+    assert!(harness.state().profile_names.is_empty());
+    assert_eq!(harness.state().current_profile, None);
+    assert!(requests(&fake).is_empty(), "the mouse is not touched");
+}
+
+#[test]
+fn the_profile_in_use_is_remembered_between_runs() {
+    let (mut harness, _, profile) = window("remembered");
+    harness.state_mut().save_profile_as("Games");
+    let fake = Fake::default();
+    let app = App::new(Box::new(fake.clone()), Box::new(fake), Some(profile), false);
+    assert_eq!(app.current_profile.as_deref(), Some("Games"));
+    assert_eq!(app.profile_names, ["Games"]);
+}

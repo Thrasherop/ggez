@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use ggez_core::{Action, Button};
+use ggez_service::profiles::Store;
 use ggez_service::Profile;
 
 use crate::device::{Device, Reply, Request, Status};
@@ -80,6 +81,14 @@ pub struct App {
     confirm_reset: bool,
     live_preview: bool,
     profile_path: Option<PathBuf>,
+    /// Saved, named profiles; `None` if there is nowhere to keep them.
+    store: Option<Store>,
+    profile_names: Vec<String>,
+    /// The named profile the window is editing, if any.
+    current_profile: Option<String>,
+    /// What has been typed as the name for a new profile.
+    new_profile_name: String,
+    confirm_delete_profile: Option<String>,
     autostart: Result<bool, String>,
     helper_running_here: bool,
     device: Box<dyn Device>,
@@ -108,6 +117,12 @@ impl App {
             None => Draft::default(),
         };
         let autostart = host.autostart_enabled();
+        let store = profile_path
+            .as_deref()
+            .and_then(|path| path.parent())
+            .map(|dir| Store::new(dir.to_path_buf()));
+        let profile_names = store.as_ref().map(Store::list).unwrap_or_default();
+        let current_profile = store.as_ref().and_then(Store::current);
         let selected_button = Button::Grid(1);
         Self {
             tab: Tab::Sensitivity,
@@ -128,6 +143,11 @@ impl App {
             confirm_reset: false,
             live_preview: true,
             profile_path,
+            store,
+            profile_names,
+            current_profile,
+            new_profile_name: String::new(),
+            confirm_delete_profile: None,
             autostart,
             helper_running_here,
             device,
@@ -175,11 +195,82 @@ impl App {
                 return;
             }
         }
+        // The named profile in use follows what is on the mouse.
+        let named = match (&self.store, &self.current_profile) {
+            (Some(store), Some(name)) => store.save(name, &profile),
+            _ => Ok(()),
+        };
+        if let Err(e) = named {
+            self.notice = Notice::Bad(format!("{e:#}"));
+            return;
+        }
         self.applied = self.draft.clone();
         self.first_run = false;
         self.applying = true;
         self.notice = Notice::Working("Applying…".into());
         self.device.send(Request::Apply(profile));
+    }
+
+    /// Switch to a saved profile: load it into the window and, if the mouse
+    /// is there, send it straight away.
+    pub fn switch_profile(&mut self, name: &str) {
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        match store.load(name).and_then(|p| p.validate().map(|()| p)) {
+            Ok(profile) => {
+                self.draft = Draft::from_profile(&profile);
+                self.current_profile = Some(name.to_owned());
+                let _ = store.set_current(Some(name));
+                self.select_button(self.selected_button);
+                self.notice = Notice::None;
+                if self.connected() && !self.applying {
+                    self.request_apply();
+                }
+            }
+            Err(e) => self.notice = Notice::Bad(format!("Could not load {name}: {e:#}")),
+        }
+    }
+
+    /// Save what the window shows as a named profile and make it the one
+    /// in use. Nothing is sent to the mouse.
+    pub fn save_profile_as(&mut self, name: &str) {
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        let saved = ggez_service::profiles::valid_name(name)
+            .map(str::to_owned)
+            .and_then(|name| {
+                store.save(&name, &self.draft.to_profile())?;
+                store.set_current(Some(&name))?;
+                Ok(name)
+            });
+        match saved {
+            Ok(name) => {
+                self.notice = Notice::Good(format!("Saved as {name}."));
+                self.current_profile = Some(name);
+                self.new_profile_name.clear();
+                self.profile_names = store.list();
+            }
+            Err(e) => self.notice = Notice::Bad(format!("{e:#}")),
+        }
+    }
+
+    /// Remove a saved profile. The mouse keeps its settings.
+    pub fn delete_profile(&mut self, name: &str) {
+        let Some(store) = self.store.clone() else {
+            return;
+        };
+        match store.delete(name) {
+            Ok(()) => {
+                if self.current_profile.as_deref() == Some(name) {
+                    self.current_profile = None;
+                }
+                self.profile_names = store.list();
+                self.notice = Notice::Good(format!("Deleted {name}."));
+            }
+            Err(e) => self.notice = Notice::Bad(format!("{e:#}")),
+        }
     }
 
     fn request_apply(&mut self) {

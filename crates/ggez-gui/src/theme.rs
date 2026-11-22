@@ -116,7 +116,7 @@ pub fn apply(ctx: &egui::Context) {
         visuals.faint_bg_color = CARD;
         visuals.hyperlink_color = ACCENT;
         visuals.selection.bg_fill = ACCENT_DEEP;
-        visuals.selection.stroke = Stroke::new(1.0, ACCENT);
+        visuals.selection.stroke = Stroke::new(1.0, TEXT);
         visuals.slider_trailing_fill = true;
         visuals.popup_shadow = egui::Shadow {
             offset: [0, 8],

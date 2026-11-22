@@ -7,5 +7,6 @@ pub mod gg;
 pub mod helper;
 pub mod paths;
 pub mod profile;
+pub mod profiles;
 
 pub use profile::Profile;

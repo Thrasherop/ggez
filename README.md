@@ -27,7 +27,7 @@ ggez closed, or on a computer that has never heard of it.
 | **Polling rate** | 125, 250, 500 or 1000 Hz. |
 | **Lighting** | A color per zone, the built-in rainbow, a flash on click, and what the mouse shows when no software is driving it. |
 | **Power** | Sleep and dim timers. Battery level and charging state. |
-| **Profiles** | Your whole setup is one small text file you can copy between computers. |
+| **Profiles** | Your whole setup is one small text file you can copy between computers. Keep several and switch between them in a click. |
 
 It works through the USB cable and the 2.4 GHz dongle. Bluetooth is not
 supported yet.
@@ -100,6 +100,21 @@ g12 = "key:ctrl+v"
 Every key is optional. [profile.example.toml](profile.example.toml) shows
 them all. The app and the helper use the profile at the path printed by
 `ggez profile-path`.
+
+### Several profiles
+
+Keep one setup for work and another for games, and switch with one click
+in the app's sidebar or one command:
+
+```
+ggez profile save Work        save the settings in use under a name
+ggez profile list             the one in use is marked with *
+ggez profile use Games        send a saved profile to the mouse
+ggez profile delete Games
+```
+
+Switching rewrites the mouse's settings, bindings included, which takes
+about a tenth of a second.
 
 ## Install
 

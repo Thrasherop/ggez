@@ -5,6 +5,7 @@ use ggez_core::{
     Aerox9, Button, ButtonMap, DefaultLighting, Link, MockTransport, PollingRate, Rgb, Transport,
     Zone,
 };
+use ggez_service::profiles::Store;
 use ggez_service::{autostart, gg, helper, paths, Profile};
 
 /// Configure a SteelSeries Aerox 9 Wireless without SteelSeries GG.
@@ -35,6 +36,19 @@ enum LightingArg {
     Reactive,
     Rainbow,
     ReactiveRainbow,
+}
+
+/// What to do with the saved, named profiles.
+#[derive(Subcommand)]
+enum ProfileCommand {
+    /// List saved profiles; the one in use is marked with `*`.
+    List,
+    /// Send a saved profile to the mouse and make it the one in use.
+    Use { name: String },
+    /// Save the profile in use under a name.
+    Save { name: String },
+    /// Delete a saved profile. The mouse keeps its settings.
+    Delete { name: String },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -115,6 +129,12 @@ enum Command {
     Autostart { action: AutostartArg },
     /// Print where the helper profile lives.
     ProfilePath,
+    /// Saved, named profiles, such as one for work and one for games:
+    /// `ggez profile list`, `use <name>`, `save <name>`, `delete <name>`.
+    Profile {
+        #[command(subcommand)]
+        action: ProfileCommand,
+    },
     /// Save current settings to the mouse's onboard memory.
     Save,
     /// Protocol research: print every report the mouse sends on its
@@ -162,6 +182,40 @@ fn run_cli() -> Result<()> {
         Command::Autostart { action } => autostart_command(*action),
         Command::ProfilePath => {
             println!("{}", paths::profile_path()?.display());
+            Ok(())
+        }
+        Command::Profile {
+            action: ProfileCommand::List,
+        } => {
+            let store = Store::default_location()?;
+            let current = store.current();
+            for name in store.list() {
+                let mark = if current.as_deref() == Some(name.as_str()) {
+                    "*"
+                } else {
+                    " "
+                };
+                println!("{mark} {name}");
+            }
+            Ok(())
+        }
+        Command::Profile {
+            action: ProfileCommand::Save { name },
+        } => {
+            let active = paths::profile_path()?;
+            let profile = Profile::load(&active)
+                .context("there are no settings to save yet; apply some first")?;
+            let store = Store::default_location()?;
+            store.save(name, &profile)?;
+            store.set_current(Some(name.trim()))?;
+            println!("Saved as {}.", name.trim());
+            Ok(())
+        }
+        Command::Profile {
+            action: ProfileCommand::Delete { name },
+        } => {
+            Store::default_location()?.delete(name.trim())?;
+            println!("Deleted {}.", name.trim());
             Ok(())
         }
         _ => with_mouse(&cli),
@@ -283,7 +337,26 @@ fn run<T: Transport>(mouse: &mut Aerox9<T>, cli: &Cli) -> Result<()> {
         | Command::Listen { .. }
         | Command::Daemon { .. }
         | Command::Autostart { .. }
-        | Command::ProfilePath => unreachable!("handled in main"),
+        | Command::ProfilePath
+        | Command::Profile {
+            action:
+                ProfileCommand::List | ProfileCommand::Save { .. } | ProfileCommand::Delete { .. },
+        } => unreachable!("handled in main"),
+        Command::Profile {
+            action: ProfileCommand::Use { name },
+        } => {
+            let store = Store::default_location()?;
+            let name = name.trim();
+            let profile = store.load(name)?;
+            if !profile.apply(mouse)? {
+                bail!("the profile {name} sets nothing");
+            }
+            // A dry run touches nothing, on the mouse or on disk.
+            if cli.dry_run.is_none() {
+                profile.save(&paths::profile_path()?)?;
+                store.set_current(Some(name))?;
+            }
+        }
         Command::Battery => {
             let b = mouse
                 .battery()
