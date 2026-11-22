@@ -70,7 +70,7 @@ impl Transport for MockTransport {
 }
 
 #[cfg(feature = "hid")]
-pub use hid::{list_steelseries, HidInterface, HidTransport};
+pub use hid::{list_steelseries, listen, HidInterface, HidTransport};
 
 #[cfg(feature = "hid")]
 mod hid {
@@ -119,6 +119,44 @@ mod hid {
                 link: Link::from_product_id(d.product_id()),
             })
             .collect())
+    }
+
+    /// Print-style listener for protocol research: calls `on_report` with the
+    /// interface number and bytes of every input report that arrives on any
+    /// vendor-defined interface of a supported mouse, for `duration`.
+    pub fn listen(
+        duration: Duration,
+        mut on_report: impl FnMut(i32, &[u8]),
+    ) -> Result<(), TransportError> {
+        let api = HidApi::new()?;
+        let mut devices = Vec::new();
+        for d in api.device_list() {
+            let supported = d.vendor_id() == VENDOR_ID && Link::from_product_id(d.product_id()).is_some();
+            if supported && d.usage_page() >= 0xFF00 {
+                let device = d.open_device(&api)?;
+                device.set_blocking_mode(false)?;
+                devices.push((d.interface_number(), device));
+            }
+        }
+        if devices.is_empty() {
+            return Err(TransportError::NotFound);
+        }
+        let end = std::time::Instant::now() + duration;
+        let mut buf = [0u8; 64];
+        while std::time::Instant::now() < end {
+            let mut idle = true;
+            for (interface, device) in &devices {
+                let n = device.read(&mut buf)?;
+                if n > 0 {
+                    idle = false;
+                    on_report(*interface, &buf[..n]);
+                }
+            }
+            if idle {
+                thread::sleep(Duration::from_millis(1));
+            }
+        }
+        Ok(())
     }
 
     pub struct HidTransport {

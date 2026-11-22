@@ -99,13 +99,19 @@ pub enum Action {
     DpiCycle,
     ScrollUp,
     ScrollDown,
-    /// A keyboard key, as a USB HID keyboard usage code.
-    Key(u8),
+    /// Up to four keyboard keys pressed together, as USB HID keyboard usage
+    /// codes; unused positions are 0. Modifiers are ordinary codes (0xE0-0xE7).
+    Keys([u8; 4]),
     /// A media key, as a USB HID consumer usage code.
     Media(u8),
 }
 
 impl Action {
+    /// A single keyboard key.
+    pub fn key(code: u8) -> Self {
+        Action::Keys([code, 0, 0, 0])
+    }
+
     fn encode(self) -> [u8; SLOT_LEN] {
         let (kind, parameter) = match self {
             Action::Disabled => (KIND_DISABLED, 0),
@@ -113,7 +119,7 @@ impl Action {
             Action::DpiCycle => (KIND_DPI, 0),
             Action::ScrollUp => (KIND_SCROLL_UP, 0),
             Action::ScrollDown => (KIND_SCROLL_DOWN, 0),
-            Action::Key(code) => (KIND_KEY, code),
+            Action::Keys(k) => return [KIND_KEY, k[0], k[1], k[2], k[3]],
             Action::Media(code) => (KIND_MEDIA, code),
         };
         [kind, parameter, 0, 0, 0]
@@ -121,7 +127,7 @@ impl Action {
 }
 
 /// Parses `disabled`, `left`, `right`, `middle`, `back`, `forward`, `dpi`,
-/// `scroll-up`, `scroll-down`, `key:<name>` and `media:<name>`.
+/// `scroll-up`, `scroll-down`, `key:<name>[+<name>...]` and `media:<name>`.
 impl FromStr for Action {
     type Err = ProtoError;
 
@@ -139,12 +145,21 @@ impl FromStr for Action {
             "scroll-up" => Action::ScrollUp,
             "scroll-down" => Action::ScrollDown,
             other => match other.split_once(':') {
-                Some(("key", name)) => Action::Key(key_code(name).ok_or_else(bad)?),
+                Some(("key", combo)) => Action::Keys(key_combo(combo).ok_or_else(bad)?),
                 Some(("media", name)) => Action::Media(media_code(name).ok_or_else(bad)?),
                 _ => return Err(bad()),
             },
         })
     }
+}
+
+/// One to four key names joined by `+`, e.g. `ctrl+shift+k`.
+fn key_combo(combo: &str) -> Option<[u8; 4]> {
+    let mut codes = [0u8; 4];
+    for (i, name) in combo.split('+').enumerate() {
+        *codes.get_mut(i)? = key_code(name)?;
+    }
+    Some(codes)
 }
 
 /// USB HID keyboard usage for a key name: a letter, a digit, `f1`-`f24`, a
@@ -171,6 +186,14 @@ fn key_code(name: &str) -> Option<u8> {
         };
     }
     Some(match name {
+        "ctrl" => 0xE0,
+        "shift" => 0xE1,
+        "alt" => 0xE2,
+        "win" | "cmd" | "super" => 0xE3,
+        "rctrl" => 0xE4,
+        "rshift" => 0xE5,
+        "ralt" => 0xE6,
+        "rwin" | "rcmd" | "rsuper" => 0xE7,
         "enter" => 0x28,
         "escape" | "esc" => 0x29,
         "backspace" => 0x2A,
@@ -228,7 +251,7 @@ impl Default for ButtonMap {
             0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x2D, 0x2E,
         ];
         for (n, code) in (1..).zip(GRID_KEYS) {
-            map.set(Button::Grid(n), Action::Key(code));
+            map.set(Button::Grid(n), Action::key(code));
         }
         map
     }
@@ -315,9 +338,9 @@ mod tests {
     #[test]
     fn default_grid_types_its_printed_labels() {
         let map = ButtonMap::default();
-        assert_eq!(map.get(Button::Grid(1)), Action::Key(0x1E));
-        assert_eq!(map.get(Button::Grid(10)), Action::Key(0x27));
-        assert_eq!(map.get(Button::Grid(12)), Action::Key(0x2E));
+        assert_eq!(map.get(Button::Grid(1)), Action::key(0x1E));
+        assert_eq!(map.get(Button::Grid(10)), Action::key(0x27));
+        assert_eq!(map.get(Button::Grid(12)), Action::key(0x2E));
         assert_eq!(map.get(Button::Left), Action::MouseButton(1));
     }
 
@@ -325,8 +348,14 @@ mod tests {
     fn parses_names() {
         assert_eq!("G12".parse::<Button>().unwrap(), Button::Grid(12));
         assert!("g13".parse::<Button>().is_err());
-        assert_eq!("key:f13".parse::<Action>().unwrap(), Action::Key(0x68));
-        assert_eq!("key:0x04".parse::<Action>().unwrap(), Action::Key(0x04));
+        assert_eq!("key:f13".parse::<Action>().unwrap(), Action::key(0x68));
+        assert_eq!("key:0x04".parse::<Action>().unwrap(), Action::key(0x04));
+        // What GG sent for Ctrl+Shift+K: 51 e1 e0 0e 00.
+        assert_eq!(
+            "key:shift+ctrl+k".parse::<Action>().unwrap().encode(),
+            [0x51, 0xE1, 0xE0, 0x0E, 0x00]
+        );
+        assert!("key:a+b+c+d+e".parse::<Action>().is_err());
         assert!("key:nope".parse::<Action>().is_err());
         assert!("media:".parse::<Action>().is_err());
     }

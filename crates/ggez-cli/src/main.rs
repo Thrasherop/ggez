@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use ggez_core::transport::{list_steelseries, HidTransport};
+use ggez_core::transport::{list_steelseries, listen, HidTransport};
 use ggez_core::{Aerox9, Button, ButtonMap, DefaultLighting, Link, MockTransport, PollingRate, Rgb, Transport, Zone};
 
 /// Configure a SteelSeries Aerox 9 Wireless without SteelSeries GG.
@@ -74,12 +74,13 @@ enum Command {
     Sleep { minutes: u32 },
     /// Seconds of idle before the LEDs dim (0-1200, 0 = never).
     Dim { seconds: u32 },
-    /// Rebind buttons, e.g. `ggez buttons g1=key:f13 g2=media:play-pause g3=disabled`.
+    /// Rebind buttons, e.g. `ggez buttons g1=key:f13 g2=key:ctrl+shift+k g3=disabled`.
     ///
     /// Buttons: left, right, middle, tilt-left, tilt-right, dpi, g1-g12 (side
     /// grid), scroll-up, scroll-down.
     /// Actions: disabled, left, right, middle, back, forward, dpi, scroll-up,
-    /// scroll-down, key:<name>, media:<name>.
+    /// scroll-down, key:<name> (or a combination such as key:ctrl+shift+k),
+    /// media:<name>.
     ///
     /// The mouse cannot report its bindings, so this sets ALL of them: any
     /// button not listed goes back to its factory binding. With no arguments,
@@ -91,6 +92,12 @@ enum Command {
     },
     /// Save current settings to the mouse's onboard memory.
     Save,
+    /// Protocol research: print every report the mouse sends on its
+    /// vendor interfaces, e.g. while you press buttons.
+    Listen {
+        #[arg(long, default_value_t = 30)]
+        seconds: u64,
+    },
     /// Protocol research: send raw hex bytes and print the replies.
     /// The mouse acts on whatever it receives, so only send known commands.
     Raw {
@@ -108,6 +115,19 @@ fn main() -> Result<()> {
 
     if let Command::List = cli.command {
         return list();
+    }
+    if let Command::Listen { seconds } = cli.command {
+        let start = std::time::Instant::now();
+        listen(std::time::Duration::from_secs(seconds), |interface, report| {
+            // SteelSeries GG, if running, streams lighting commands; hide the
+            // mouse's acknowledgements of those.
+            if report.starts_with(&[0x61, 0x00]) {
+                return;
+            }
+            let len = report.iter().rposition(|&b| b != 0).map_or(1, |i| i + 1);
+            println!("{:8.3}  if{}  {}", start.elapsed().as_secs_f64(), interface, hex(&report[..len]));
+        })?;
+        return Ok(());
     }
 
     match cli.dry_run {
@@ -160,7 +180,7 @@ fn list() -> Result<()> {
 
 fn run<T: Transport>(mouse: &mut Aerox9<T>, cli: &Cli) -> Result<()> {
     match &cli.command {
-        Command::List => unreachable!("handled in main"),
+        Command::List | Command::Listen { .. } => unreachable!("handled in main"),
         Command::Battery => {
             let b = mouse
                 .battery()
