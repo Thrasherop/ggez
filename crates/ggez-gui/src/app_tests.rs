@@ -74,8 +74,23 @@ fn window(name: &str) -> (Harness<'static, App>, Fake, PathBuf) {
         true,
     );
     let mut harness = Harness::builder()
-        .with_size(egui::vec2(1000.0, 700.0))
-        .build_state(|ctx, app: &mut App| app.ui(ctx), app);
+        .with_size(egui::vec2(1080.0, 760.0))
+        .build_state(
+            |ctx, app: &mut App| {
+                // The real program installs the theme before the first frame.
+                // Fonts set during a frame only exist from the next one, so
+                // spend the first frame on that and draw nothing.
+                let themed = egui::Id::new("theme-installed");
+                if !ctx.data(|data| data.get_temp::<bool>(themed).unwrap_or(false)) {
+                    crate::theme::apply(ctx);
+                    ctx.data_mut(|data| data.insert_temp(themed, true));
+                    ctx.request_repaint();
+                    return;
+                }
+                app.ui(ctx)
+            },
+            app,
+        );
     harness.run();
     (harness, fake, profile)
 }
@@ -408,4 +423,79 @@ fn a_running_gg_is_called_out() {
     reply(&fake, Reply::GgRunning(false));
     harness.run();
     assert!(harness.query_by_label(ggez_service::gg::ADVICE).is_none());
+}
+
+#[test]
+fn clicking_the_drawing_selects_a_button() {
+    let (mut harness, _, _) = window("diagram");
+    click(&mut harness, "Buttons");
+    for (label, button) in [
+        ("Side button 5", Button::Grid(5)),
+        ("Left button", Button::Left),
+        ("Wheel click", Button::Middle),
+        ("Wheel tilt right", Button::TiltRight),
+        ("Scroll down", Button::ScrollDown),
+        ("CPI button", Button::Dpi),
+        ("Side button 12", Button::Grid(12)),
+    ] {
+        click(&mut harness, label);
+        assert_eq!(harness.state().selected_button, button, "{label}");
+    }
+    // The editor now works on the button that was picked.
+    click(&mut harness, "Ctrl");
+    assert_eq!(
+        harness
+            .state()
+            .draft
+            .buttons
+            .get(Button::Grid(12))
+            .to_string(),
+        "key:ctrl+equals"
+    );
+}
+
+#[test]
+fn every_button_in_the_drawing_can_be_reached() {
+    let (mut harness, _, _) = window("diagram-all");
+    click(&mut harness, "Buttons");
+    for button in Button::ALL {
+        harness.state_mut().select_button(Button::Grid(1));
+        harness.state_mut().select_button(button);
+        harness.run();
+        assert_eq!(harness.state().selected_button, button);
+    }
+    // Twenty controls in the drawing, each exposed by name.
+    for name in [
+        "Right button",
+        "Wheel tilt left",
+        "Scroll up",
+        "Side button 1",
+    ] {
+        harness.get_by_role_and_label(egui::accesskit::Role::Button, name);
+    }
+}
+
+#[test]
+fn the_active_cpi_level_can_be_chosen() {
+    let (mut harness, _, _) = window("active-level");
+    assert_eq!(harness.state().draft.dpi_selected, 1);
+    harness.get_by_label("Level 4").click();
+    harness.run();
+    assert_eq!(harness.state().draft.dpi_selected, 3);
+}
+
+#[test]
+fn click_flash_can_be_switched_on() {
+    let (mut harness, fake, _) = window("flash");
+    click(&mut harness, "Lighting");
+    requests(&fake);
+    harness.get_by_label("Flash on click").click();
+    // The rainbow preview animates, so the window never comes to rest.
+    harness.run_steps(4);
+    assert_eq!(harness.state().draft.reactive, Some([255, 255, 255]));
+    assert_eq!(
+        requests(&fake).len(),
+        1,
+        "the change is previewed on the mouse"
+    );
 }

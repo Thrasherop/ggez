@@ -10,6 +10,8 @@
 mod app;
 mod device;
 mod draft;
+mod mouse_view;
+mod theme;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -105,22 +107,6 @@ fn icon() -> egui::IconData {
     }
 }
 
-fn style(ctx: &egui::Context) {
-    ctx.set_theme(egui::Theme::Dark);
-    ctx.style_mut(|style| {
-        style.spacing.item_spacing = egui::vec2(8.0, 8.0);
-        style.spacing.button_padding = egui::vec2(10.0, 6.0);
-        style.spacing.interact_size.y = 28.0;
-        for (_, font) in style.text_styles.iter_mut() {
-            font.size *= 1.12;
-        }
-        let selection = egui::Color32::from_rgb(20, 110, 100);
-        style.visuals.selection.bg_fill = selection;
-        style.visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
-        style.visuals.hyperlink_color = egui::Color32::from_rgb(45, 212, 191);
-    });
-}
-
 fn main() -> anyhow::Result<()> {
     let profile_path = paths::profile_path().ok();
     let background = std::env::args().any(|arg| arg == "--background");
@@ -142,15 +128,15 @@ fn main() -> anyhow::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("ggez")
             .with_icon(Arc::new(icon()))
-            .with_inner_size([1000.0, 700.0])
-            .with_min_inner_size([860.0, 560.0]),
+            .with_inner_size([1080.0, 760.0])
+            .with_min_inner_size([980.0, 620.0]),
         ..Default::default()
     };
     eframe::run_native(
         "ggez",
         options,
         Box::new(move |cc| {
-            style(&cc.egui_ctx);
+            theme::apply(&cc.egui_ctx);
             let ctx = cc.egui_ctx.clone();
             let worker = device::Worker::spawn(move || ctx.request_repaint());
             Ok(Box::new(Window(app::App::new(
