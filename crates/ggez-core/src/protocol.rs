@@ -13,6 +13,9 @@ use crate::dpi_table::{DPI_MAX, DPI_MIN, DPI_STEP, TRUEMOVE_AIR};
 pub const VENDOR_ID: u16 = 0x1038;
 /// The HID interface that accepts configuration commands.
 pub const CONFIG_INTERFACE: i32 = 3;
+/// The usage page that interface declares. Some systems cannot say which
+/// interface number a HID device has, and it is then known by this.
+pub const CONFIG_USAGE_PAGE: u16 = 0xFFC0;
 pub const MAX_DPI_PRESETS: usize = 5;
 pub const MAX_SLEEP_MINUTES: u32 = 20;
 pub const MAX_DIM_SECONDS: u32 = 1200;

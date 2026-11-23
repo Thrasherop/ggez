@@ -301,6 +301,11 @@ fn list() -> Result<()> {
             "1038:{:04x} if={} usage={:04x}:{:04x} {:?} [{}]\n    {}",
             i.product_id, i.interface, i.usage_page, i.usage, i.product, support, i.path
         );
+        match &i.opens {
+            Some(Ok(())) => println!("    settings interface: opens"),
+            Some(Err(reason)) => println!("    settings interface: will not open: {reason}"),
+            None => {}
+        }
     }
     Ok(())
 }

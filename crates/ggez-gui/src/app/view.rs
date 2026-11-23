@@ -213,6 +213,7 @@ impl App {
                 "Not connected",
                 "Plug in the USB cable or the 2.4 GHz dongle.".to_string(),
             ),
+            Status::Blocked(reason) => (DANGER, "Found, but cannot be opened", reason.clone()),
             Status::Asleep => (
                 WARNING,
                 "Mouse is asleep or off",
@@ -336,6 +337,10 @@ impl App {
 
     /// Things the user should know whatever page they are on.
     fn banners(&mut self, ui: &mut Ui) {
+        if let Status::Blocked(reason) = &self.status {
+            theme::callout(ui, DANGER, &blocked_advice(reason));
+            ui.add_space(6.0);
+        }
         if matches!(self.status, Status::NoDevice | Status::Asleep) {
             theme::callout(
                 ui,
@@ -1629,6 +1634,27 @@ fn named_list(name: &str, chosen: &str) -> WidgetInfo {
     let mut info = WidgetInfo::labeled(WidgetType::ComboBox, true, name);
     info.current_text_value = Some(chosen.to_string());
     info
+}
+
+/// What to tell someone whose mouse is plugged in but will not open.
+pub(super) fn blocked_advice(reason: &str) -> String {
+    let mut text = format!(
+        "Your mouse is plugged in, but this computer would not let ggez open it. It said: {reason}"
+    );
+    if cfg!(target_os = "macos") {
+        text.push_str(
+            "\nIf macOS is refusing, allow ggez under System Settings, Privacy & Security, Input Monitoring, then open ggez again.",
+        );
+    } else if cfg!(target_os = "linux") {
+        text.push_str(
+            "\nOn Linux this usually means the udev rule from the README is not installed yet.",
+        );
+    } else {
+        text.push_str(
+            "\nAnother program may be holding it. Closing SteelSeries GG is worth trying.",
+        );
+    }
+    text
 }
 
 /// The mark on the built-in list controls, to match the custom ones.

@@ -14,4 +14,6 @@ hid = ["dep:hidapi"]
 
 [dependencies]
 thiserror = "2"
-hidapi = { version = "2", optional = true }
+# On a Mac hidapi takes a device for itself alone unless told otherwise,
+# which would shut out the helper while the window is open, and the reverse.
+hidapi = { version = "2", optional = true, features = ["macos-shared-device"] }

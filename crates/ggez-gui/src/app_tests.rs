@@ -164,6 +164,23 @@ fn apply_is_unavailable_without_a_mouse() {
 }
 
 #[test]
+fn a_mouse_that_will_not_open_is_not_called_unplugged() {
+    let (mut harness, fake, _) = window("blocked");
+    reply(
+        &fake,
+        Reply::Status(Status::Blocked("not permitted".into())),
+    );
+    harness.run();
+    harness.get_by_label("Found, but cannot be opened");
+    // The system's own words are passed on, not swallowed.
+    harness.get_by_label_contains("It said: not permitted");
+    assert!(harness.query_by_label("Not connected").is_none());
+    click(&mut harness, "125 Hz");
+    click(&mut harness, "Apply to mouse");
+    assert!(requests(&fake).is_empty());
+}
+
+#[test]
 fn revert_discards_changes() {
     let (mut harness, _, _) = window("revert");
     click(&mut harness, "125 Hz");

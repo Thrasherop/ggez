@@ -38,6 +38,9 @@ pub enum Status {
     Unknown,
     /// No cable or dongle is plugged in.
     NoDevice,
+    /// The mouse or dongle is plugged in, but the computer would not let
+    /// this program open it. Holds the system's own words for why.
+    Blocked(String),
     /// The dongle is present but the mouse is off, asleep or out of range.
     Asleep,
     Connected {
@@ -150,9 +153,21 @@ fn apply(profile: &Profile) -> Result<(), String> {
 }
 
 fn status(firmware: &mut Option<String>) -> Status {
-    let Ok(mut mouse) = Aerox9::open() else {
-        *firmware = None;
-        return Status::NoDevice;
+    let mut mouse = match Aerox9::open() {
+        Ok(mouse) => mouse,
+        Err(e) => {
+            *firmware = None;
+            return match e {
+                ggez_core::Error::Transport(ggez_core::TransportError::NotFound) => {
+                    Status::NoDevice
+                }
+                ggez_core::Error::Transport(
+                    ggez_core::TransportError::Blocked(reason)
+                    | ggez_core::TransportError::Hid(reason),
+                ) => Status::Blocked(reason),
+                other => Status::Blocked(other.to_string()),
+            };
+        }
     };
     if !mouse.is_online().unwrap_or(false) {
         return Status::Asleep;

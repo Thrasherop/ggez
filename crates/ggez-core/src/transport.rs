@@ -7,8 +7,28 @@ use std::collections::VecDeque;
 pub enum TransportError {
     #[error("no supported mouse found (is the Aerox 9 plugged in or its dongle connected?)")]
     NotFound,
+    #[error("the mouse was found, but this computer would not open it: {0}")]
+    Blocked(String),
     #[error("HID error: {0}")]
     Hid(String),
+}
+
+/// How sure it is that a HID interface is the one settings are sent to,
+/// from what the system says about it: higher is surer, `None` is not it.
+///
+/// Windows and Linux number a device's interfaces. macOS does not always
+/// (hidapi then reports -1), so the usage page has to be enough there.
+pub fn config_match(interface: i32, usage_page: u16) -> Option<u8> {
+    use crate::protocol::{CONFIG_INTERFACE, CONFIG_USAGE_PAGE};
+    match (
+        interface == CONFIG_INTERFACE,
+        usage_page == CONFIG_USAGE_PAGE,
+    ) {
+        (true, true) => Some(2),
+        (true, false) => Some(1),
+        (false, true) if interface < 0 => Some(1),
+        _ => None,
+    }
 }
 
 pub trait Transport {
@@ -78,8 +98,8 @@ mod hid {
 
     use hidapi::HidApi;
 
-    use super::{Transport, TransportError};
-    use crate::protocol::{Link, CONFIG_INTERFACE, VENDOR_ID};
+    use super::{config_match, Transport, TransportError};
+    use crate::protocol::{Link, VENDOR_ID};
 
     /// The mouse needs a moment to process each command.
     const COMMAND_DELAY: Duration = Duration::from_millis(50);
@@ -101,6 +121,9 @@ mod hid {
         pub path: String,
         /// Set if this is a mouse this crate can configure.
         pub link: Option<Link>,
+        /// For the interface settings would be sent to: whether it opens,
+        /// and why not if it does not. `None` for every other interface.
+        pub opens: Option<Result<(), String>>,
     }
 
     /// Every HID interface exposed by any SteelSeries device.
@@ -109,14 +132,21 @@ mod hid {
         Ok(api
             .device_list()
             .filter(|d| d.vendor_id() == VENDOR_ID)
-            .map(|d| HidInterface {
-                product_id: d.product_id(),
-                interface: d.interface_number(),
-                usage_page: d.usage_page(),
-                usage: d.usage(),
-                product: d.product_string().unwrap_or("").to_string(),
-                path: d.path().to_string_lossy().into_owned(),
-                link: Link::from_product_id(d.product_id()),
+            .map(|d| {
+                let link = Link::from_product_id(d.product_id());
+                let settings =
+                    link.is_some() && config_match(d.interface_number(), d.usage_page()).is_some();
+                HidInterface {
+                    product_id: d.product_id(),
+                    interface: d.interface_number(),
+                    usage_page: d.usage_page(),
+                    usage: d.usage(),
+                    product: d.product_string().unwrap_or("").to_string(),
+                    path: d.path().to_string_lossy().into_owned(),
+                    link,
+                    opens: settings
+                        .then(|| d.open_device(&api).map(|_| ()).map_err(|e| e.to_string())),
+                }
             })
             .collect())
     }
@@ -169,23 +199,32 @@ mod hid {
         /// dongle, since the dongle stays plugged in while the mouse charges.
         pub fn open() -> Result<(Self, Link), TransportError> {
             let api = HidApi::new()?;
-            let mut best = None;
+            let mut found = Vec::new();
             for d in api.device_list() {
-                if d.vendor_id() != VENDOR_ID || d.interface_number() != CONFIG_INTERFACE {
+                if d.vendor_id() != VENDOR_ID {
                     continue;
                 }
-                match Link::from_product_id(d.product_id()) {
-                    Some(Link::Wired) => {
-                        best = Some((d, Link::Wired));
-                        break;
-                    }
-                    Some(Link::Wireless) if best.is_none() => best = Some((d, Link::Wireless)),
-                    _ => {}
+                let Some(link) = Link::from_product_id(d.product_id()) else {
+                    continue;
+                };
+                if let Some(sure) = config_match(d.interface_number(), d.usage_page()) {
+                    found.push((link == Link::Wired, sure, d, link));
                 }
             }
-            let (info, link) = best.ok_or(TransportError::NotFound)?;
-            let device = info.open_device(&api)?;
-            Ok((Self { device }, link))
+            // The cable first, then whichever the system is surest about.
+            found.sort_by_key(|(wired, sure, ..)| std::cmp::Reverse((*wired, *sure)));
+            let mut refused = None;
+            for (_, _, info, link) in found {
+                match info.open_device(&api) {
+                    Ok(device) => return Ok((Self { device }, link)),
+                    // Keep the first reason: it is about the likeliest one.
+                    Err(e) => refused = refused.or(Some(e.to_string())),
+                }
+            }
+            Err(match refused {
+                Some(reason) => TransportError::Blocked(reason),
+                None => TransportError::NotFound,
+            })
         }
     }
 
@@ -199,5 +238,34 @@ mod hid {
         fn read(&mut self, buf: &mut [u8], timeout_ms: i32) -> Result<usize, TransportError> {
             Ok(self.device.read_timeout(buf, timeout_ms)?)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::config_match;
+
+    #[test]
+    fn the_settings_interface_is_known_by_number_and_usage_page() {
+        // Windows and Linux: interface 3, usage page FFC0.
+        assert_eq!(config_match(3, 0xFFC0), Some(2));
+        // A system that does not report usage pages.
+        assert_eq!(config_match(3, 0), Some(1));
+    }
+
+    #[test]
+    fn a_system_that_does_not_number_interfaces_goes_by_usage_page() {
+        assert_eq!(config_match(-1, 0xFFC0), Some(1));
+        // The other vendor interface, and the ordinary mouse and keyboard.
+        assert_eq!(config_match(-1, 0xFFC1), None);
+        assert_eq!(config_match(-1, 0x0001), None);
+    }
+
+    #[test]
+    fn other_interfaces_are_not_it() {
+        assert_eq!(config_match(0, 0x0001), None);
+        assert_eq!(config_match(4, 0xFFC1), None);
+        // A numbered interface is believed over a usage page.
+        assert_eq!(config_match(4, 0xFFC0), None);
     }
 }
