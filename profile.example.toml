@@ -32,6 +32,9 @@ bottom = "#0000ff"    # by the wrist
 #          scroll-up, scroll-down
 # Actions: disabled, left, right, middle, back, forward, dpi, scroll-up,
 #          scroll-down, key:<key>[+<key>...], media:<name>
+# "primary" is Ctrl on Windows and Linux and Cmd on a Mac, as in
+# "key:primary+c". The helper sets it each time the mouse arrives, so a
+# binding that uses it needs ggez running on each computer.
 [buttons]
 g10 = "key:ctrl+x"
 g11 = "key:ctrl+c"

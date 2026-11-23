@@ -117,7 +117,7 @@ pub fn check_step(step: &str) -> Result<()> {
 
 fn key(name: &str) -> Result<u8> {
     match format!("key:{name}").parse::<Action>() {
-        Ok(Action::Keys([code, 0, 0, 0])) => typeable(code),
+        Ok(Action::Keys([code, 0, 0, 0])) => typeable(ggez_core::Host::this().key(code)),
         _ => bail!("{name:?} is not one key"),
     }
 }
@@ -141,7 +141,11 @@ fn parse_step(written: &str) -> Result<Vec<Op>> {
     let send = |output| Op::Send(output);
     Ok(match kind.to_ascii_lowercase().as_str() {
         "key" => {
-            let Ok(Action::Keys(codes)) = format!("key:{rest}").parse::<Action>() else {
+            let Ok(shortcut) = format!("key:{rest}").parse::<Action>() else {
+                bail!("{rest:?} is not a key or a shortcut");
+            };
+            // The macro runs here, so "primary" is this computer's key.
+            let Action::Keys(codes) = shortcut.on(ggez_core::Host::this()) else {
                 bail!("{rest:?} is not a key or a shortcut");
             };
             let codes: Vec<u8> = codes.into_iter().filter(|&code| code != 0).collect();
@@ -746,7 +750,7 @@ mod tests {
                 panic!("{name} does not parse");
             };
             assert!(
-                scan_code(code).is_some(),
+                scan_code(ggez_core::Host::this().key(code)).is_some(),
                 "{name} ({code:#04x}) has no scan code"
             );
         }

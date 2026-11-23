@@ -360,6 +360,32 @@ impl Profile {
         Self::send_lighting(&self.check()?, mouse)
     }
 
+    /// Send what a mouse needs on arriving at this computer: the lighting
+    /// it forgot while off, and the bindings if any of them is Ctrl on one
+    /// kind of computer and Cmd on another, since it may have come from the
+    /// other kind. Nothing is stored in the mouse's memory. Returns whether
+    /// anything was sent.
+    pub fn apply_on_arrival<T: Transport>(&self, mouse: &mut Aerox9<T>) -> Result<bool> {
+        let checked = self.check()?;
+        let mut sent = false;
+        if let Some(map) = checked.buttons.as_ref().filter(|map| map.uses_primary()) {
+            mouse.set_buttons(map)?;
+            sent = true;
+        }
+        sent |= Self::send_lighting(&checked, mouse)?;
+        Ok(sent)
+    }
+
+    /// Whether any binding is Ctrl on one kind of computer and Cmd on
+    /// another. Such a profile needs ggez running on each computer the
+    /// mouse is used with.
+    pub fn uses_primary(&self) -> bool {
+        self.buttons
+            .iter()
+            .flatten()
+            .any(|(_, action)| action.parse::<Action>().is_ok_and(Action::uses_primary))
+    }
+
     /// Whether the profile has anything [`Profile::apply_volatile`] would send.
     pub fn has_volatile(&self) -> bool {
         self.reactive.is_some()
@@ -399,6 +425,33 @@ impl Profile {
 mod tests {
     use super::*;
     use ggez_core::{Link, MockTransport};
+
+    #[test]
+    fn a_mouse_arriving_is_given_bindings_that_depend_on_the_computer() {
+        let text = "[buttons]\ng1 = \"key:primary+c\"\n";
+        let profile = Profile::parse(text).unwrap();
+        assert!(profile.uses_primary());
+        let packets = commands(|p, m| p.apply_on_arrival(m), text);
+        // The three packets of the button table, and nothing stored.
+        assert_eq!(packets.len(), 3);
+        assert!(packets.iter().all(|packet| packet[1] == 0x6A));
+        let key = if cfg!(target_os = "macos") {
+            0xE3
+        } else {
+            0xE0
+        };
+        assert_eq!(&packets[2][13..18], &[0x51, key, 0x06, 0, 0]);
+    }
+
+    #[test]
+    fn a_mouse_arriving_keeps_bindings_that_are_the_same_everywhere() {
+        let text = "[buttons]\ng1 = \"key:ctrl+c\"\n";
+        assert!(!Profile::parse(text).unwrap().uses_primary());
+        assert!(commands(|p, m| p.apply_on_arrival(m), text).is_empty());
+        // Lighting is still restored, as before.
+        let lit = commands(|p, m| p.apply_on_arrival(m), FULL);
+        assert_eq!(lit, commands(|p, m| p.apply_volatile(m), FULL));
+    }
 
     const FULL: &str = r##"
         dpi = [800, 1600]

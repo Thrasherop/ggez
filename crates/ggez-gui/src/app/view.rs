@@ -213,7 +213,7 @@ impl App {
                 "Not connected",
                 "Plug in the USB cable or the 2.4 GHz dongle.".to_string(),
             ),
-            Status::Blocked(reason) => (DANGER, "Found, but cannot be opened", reason.clone()),
+            Status::Blocked(reason) => (DANGER, "Cannot open the mouse", reason.clone()),
             Status::Asleep => (
                 WARNING,
                 "Mouse is asleep or off",
@@ -770,11 +770,14 @@ impl App {
     /// Modifier toggles plus one key, which covers ordinary shortcuts. More
     /// unusual combinations go through "Edit as text".
     fn keys_editor(&mut self, ui: &mut Ui, codes: [u8; 4]) {
-        const MODIFIERS: [(&str, u8); 4] = [
-            ("Ctrl", 0xE0),
-            ("Shift", 0xE1),
-            ("Alt", 0xE2),
-            ("Win", 0xE3),
+        // The one that follows the computer comes first: it is the one
+        // most shortcuts want.
+        const MODIFIERS: [(&str, u8); 5] = [
+            ("primary", ggez_core::PRIMARY),
+            ("ctrl", 0xE0),
+            ("shift", 0xE1),
+            ("alt", 0xE2),
+            ("win", 0xE3),
         ];
         let is_modifier = |code: u8| MODIFIERS.iter().any(|(_, m)| *m == code);
         let held: Vec<u8> = codes.iter().copied().filter(|&c| is_modifier(c)).collect();
@@ -801,13 +804,18 @@ impl App {
 
         ui.add_space(2.0);
         theme::caption(ui, "Held with");
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
             for (name, code) in MODIFIERS {
                 let turning_on = !held.contains(&code);
                 // A binding holds at most four keys in total.
                 let full = held.len() + usize::from(key.is_some()) >= 4;
-                if choice(ui, !turning_on, name) && !(turning_on && full) {
+                let about = if code == ggez_core::PRIMARY {
+                    PRIMARY_ABOUT
+                } else {
+                    ""
+                };
+                if choice_about(ui, !turning_on, &key_title(name), about) && !(turning_on && full) {
                     let mut held = held.clone();
                     if turning_on {
                         held.push(code);
@@ -919,6 +927,11 @@ impl App {
                     .color(WARNING)
                     .size(12.5),
             );
+        }
+        if held.contains(&ggez_core::PRIMARY) {
+            ui.add_space(6.0);
+            let starts_at_login = matches!(self.autostart, Ok(true));
+            theme::callout(ui, TEXT_DIM, &primary_note(starts_at_login));
         }
     }
 
@@ -1619,13 +1632,40 @@ fn level_marker(ui: &mut Ui, active: bool, number: usize) -> bool {
 /// One option among a few shown side by side. Returns whether it was
 /// clicked.
 fn choice(ui: &mut Ui, selected: bool, text: &str) -> bool {
-    ui.add(
-        egui::Button::new(text)
-            .selected(selected)
-            .min_size(vec2(52.0, 32.0)),
-    )
-    .on_hover_cursor(egui::CursorIcon::PointingHand)
-    .clicked()
+    choice_about(ui, selected, text, "")
+}
+
+/// A choice that explains itself when the pointer rests on it.
+fn choice_about(ui: &mut Ui, selected: bool, text: &str, about: &str) -> bool {
+    let button = ui
+        .add(
+            egui::Button::new(text)
+                .selected(selected)
+                .min_size(vec2(52.0, 32.0)),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if about.is_empty() {
+        button.clicked()
+    } else {
+        button.on_hover_text(about).clicked()
+    }
+}
+
+/// What the modifier that follows the computer is, in a sentence.
+const PRIMARY_ABOUT: &str =
+    "Ctrl on Windows and Linux, Cmd on a Mac: the key shortcuts such as copy are made with on each.";
+
+/// What someone using that modifier needs to know to rely on it.
+pub(super) fn primary_note(starts_at_login: bool) -> String {
+    let mut text = String::from(
+        "Ctrl on Windows and Linux, Cmd on a Mac. ggez sets it when the mouse arrives, so ggez has to be running on each computer.",
+    );
+    text.push_str(if starts_at_login {
+        "\nHere it starts at login, so this computer is taken care of."
+    } else {
+        "\nHere, turn on \"Start the helper when I log in\" in Settings."
+    });
+    text
 }
 
 /// What a list control tells assistive technology: its name, which is
@@ -1778,7 +1818,7 @@ fn button_title(button: Button) -> String {
 fn is_modifier_name(name: &str) -> bool {
     matches!(
         name,
-        "ctrl" | "shift" | "alt" | "win" | "rctrl" | "rshift" | "ralt" | "rwin"
+        "primary" | "ctrl" | "shift" | "alt" | "win" | "rctrl" | "rshift" | "ralt" | "rwin"
     )
 }
 
@@ -1789,8 +1829,11 @@ fn key_title(name: &str) -> String {
         "rctrl" => "Right Ctrl".into(),
         "rshift" => "Right Shift".into(),
         "ralt" => "Right Alt".into(),
-        "rwin" => "Right Win".into(),
-        "win" => "Win".into(),
+        "rwin" => format!("Right {}", system_key_title()),
+        "win" => system_key_title().into(),
+        // This computer's own key first.
+        "primary" if cfg!(target_os = "macos") => "Cmd/Ctrl".into(),
+        "primary" => "Ctrl/Cmd".into(),
         "minus" => "-".into(),
         "equals" => "=".into(),
         "escape" => "Esc".into(),
@@ -1807,6 +1850,17 @@ fn key_title(name: &str) -> String {
             })
             .collect::<Vec<_>>()
             .join(" "),
+    }
+}
+
+/// What this computer's keyboards call the key beside Alt.
+fn system_key_title() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "Cmd"
+    } else if cfg!(windows) {
+        "Win"
+    } else {
+        "Super"
     }
 }
 

@@ -876,6 +876,15 @@ pub fn buttons(
         } else {
             TEXT
         };
+        // A binding too long for the key ends in an ellipsis, not at the
+        // key's edge; the editor beside it shows the whole of it.
+        let room = rect.width() - 10.0;
+        let text = elided(&text, |text| {
+            let laid = ui
+                .painter()
+                .layout_no_wrap(text.to_string(), font.clone(), color);
+            laid.size().x <= room
+        });
         let galley = ui.painter().layout_no_wrap(text, font, color);
         let clip = ui.painter().with_clip_rect(rect.shrink(3.0));
         clip.galley(
@@ -889,6 +898,21 @@ pub fn buttons(
     }
 
     clicked.get()
+}
+
+/// The text, or as much of its start as `fits` with an ellipsis after it.
+fn elided(text: &str, fits: impl Fn(&str) -> bool) -> String {
+    if fits(text) {
+        return text.to_string();
+    }
+    let mut kept: Vec<char> = text.chars().collect();
+    while kept.pop().is_some() {
+        let shorter: String = kept.iter().chain(&['…']).collect();
+        if fits(&shorter) {
+            return shorter;
+        }
+    }
+    String::new()
 }
 
 /// A label beside the mouse for one of its controls, joined by a line to
@@ -970,6 +994,15 @@ pub fn lighting(ui: &mut Ui, place: Place, lights: [Color32; 3]) -> [Pos2; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_too_long_for_its_place_ends_in_an_ellipsis() {
+        let fits = |text: &str| text.chars().count() <= 6;
+        assert_eq!(elided("Ctrl+C", fits), "Ctrl+C");
+        assert_eq!(elided("Ctrl/Cmd+Shift+C", fits), "Ctrl/…");
+        // Nothing fits: nothing is drawn, rather than something cut off.
+        assert_eq!(elided("Ctrl+C", |_| false), "");
+    }
 
     fn body() -> Body {
         Body::placed(pos2(300.0, 200.0), BUTTONS_HEIGHT)

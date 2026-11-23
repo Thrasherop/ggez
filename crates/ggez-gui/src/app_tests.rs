@@ -171,7 +171,7 @@ fn a_mouse_that_will_not_open_is_not_called_unplugged() {
         Reply::Status(Status::Blocked("not permitted".into())),
     );
     harness.run();
-    harness.get_by_label("Found, but cannot be opened");
+    harness.get_by_label("Cannot open the mouse");
     // The system's own words are passed on, not swallowed.
     harness.get_by_label_contains("It said: not permitted");
     assert!(harness.query_by_label("Not connected").is_none());
@@ -737,6 +737,43 @@ fn extra_mouse_buttons_can_be_chosen() {
     );
     harness.get_by_label_contains("Windows only passes the first five");
     assert_eq!(view::describe(Action::MouseButton(7)), "Button 7");
+}
+
+#[test]
+fn a_shortcut_can_follow_the_computer() {
+    let (mut harness, _, _) = window("primary");
+    click(&mut harness, "Buttons");
+    click(&mut harness, "Side button 5");
+    // Named for this computer's own key first.
+    let name = if cfg!(target_os = "macos") {
+        "Cmd/Ctrl"
+    } else {
+        "Ctrl/Cmd"
+    };
+    click(&mut harness, name);
+    let action = harness.state().draft.buttons.get(Button::Grid(5));
+    assert_eq!(action, "key:primary+5".parse().unwrap());
+    assert_eq!(view::describe(action), format!("{name} + 5"));
+    // It is written to the profile as itself, not as this computer's key.
+    let profile = harness.state().draft.to_profile();
+    assert_eq!(profile.buttons.unwrap()["g5"], "key:primary+5");
+    // And the editor says what relying on it takes.
+    harness.get_by_label_contains("has to be running on each computer");
+    // Taking it off again takes the note away.
+    click(&mut harness, name);
+    assert_eq!(
+        harness.state().draft.buttons.get(Button::Grid(5)),
+        "key:5".parse().unwrap()
+    );
+    assert!(harness
+        .query_by_label_contains("has to be running on each computer")
+        .is_none());
+}
+
+#[test]
+fn the_note_on_a_following_shortcut_knows_about_start_at_login() {
+    assert!(view::primary_note(true).contains("taken care of"));
+    assert!(view::primary_note(false).contains("Start the helper when I log in"));
 }
 
 #[test]

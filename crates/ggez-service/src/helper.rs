@@ -4,6 +4,11 @@
 //! reactive color. The helper re-sends those every time the mouse becomes
 //! reachable (plugged in, switched on, woken from sleep), and applies and
 //! saves the whole profile whenever the profile file changes.
+//!
+//! A binding may be Ctrl on Windows and Linux and Cmd on a Mac. The mouse
+//! cannot tell which it is plugged into, so a profile with such a binding
+//! has its bindings re-sent on arrival too, by whichever computer the
+//! mouse has just reached.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,7 +31,8 @@ const BATTERY_EVERY_PASSES: u32 = 150;
 /// What the helper did on one pass, for logs and tests.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
-    /// The mouse became reachable and the volatile settings were re-sent.
+    /// The mouse became reachable and was given what it needs on arriving:
+    /// its lighting, and its bindings if they depend on the computer.
     Reconnected,
     /// The profile file changed and the whole profile was applied and saved.
     ProfileApplied,
@@ -169,7 +175,7 @@ impl Helper {
                 .map(|()| Some(Event::ProfileApplied))
         } else if !was_online {
             profile
-                .apply_volatile(mouse)
+                .apply_on_arrival(mouse)
                 .map(|sent| sent.then_some(Event::Reconnected))
         } else {
             Ok(None)
@@ -419,6 +425,37 @@ mod tests {
         );
         assert!(sent(&mut mouse).is_empty());
         assert!(helper.profile.as_ref().unwrap().has_volatile());
+    }
+
+    #[test]
+    fn bindings_that_depend_on_the_computer_are_sent_each_time_the_mouse_arrives() {
+        let path = profile_file("primary", "[buttons]\ng1 = \"key:primary+c\"\n");
+        let mut helper = Helper::new(path);
+        // It may have come from the other kind of computer, so it is told
+        // again: the three packets of the button table, and nothing stored.
+        let mut mouse = dongle(true);
+        assert_eq!(helper.tick(Some(&mut mouse)), [Event::Reconnected]);
+        assert_eq!(sent(&mut mouse), [0x6A, 0x6A, 0x6A]);
+        // Not again while it stays.
+        assert!(helper.tick(Some(&mut mouse)).is_empty());
+        assert!(sent(&mut mouse).is_empty());
+        // Away and back.
+        assert_eq!(
+            helper.tick(None::<&mut Aerox9<FakeDongle>>),
+            [Event::Disconnected]
+        );
+        let mut back = dongle(true);
+        assert_eq!(helper.tick(Some(&mut back)), [Event::Reconnected]);
+        assert_eq!(sent(&mut back), [0x6A, 0x6A, 0x6A]);
+    }
+
+    #[test]
+    fn bindings_that_are_the_same_everywhere_are_left_on_the_mouse() {
+        let path = profile_file("no-primary", "[buttons]\ng1 = \"key:ctrl+c\"\n");
+        let mut helper = Helper::new(path);
+        let mut mouse = dongle(true);
+        assert!(helper.tick(Some(&mut mouse)).is_empty());
+        assert!(sent(&mut mouse).is_empty());
     }
 
     #[test]

@@ -109,6 +109,25 @@ Every key is optional. [profile.example.toml](profile.example.toml) shows
 them all. The app and the helper use the profile at the path printed by
 `ggez profile-path`.
 
+### One mouse, a PC and a Mac
+
+Copy is Ctrl+C on Windows and Linux and Cmd+C on a Mac, and the mouse cannot
+tell which it is plugged into. Write the modifier as `primary` and ggez
+settles it for you:
+
+```toml
+[buttons]
+g11 = "key:primary+c"   # Ctrl+C on Windows and Linux, Cmd+C on a Mac
+```
+
+In the app it is the **Ctrl/Cmd** button under "Held with". Each time the
+mouse arrives at a computer, the helper there sends it that computer's
+version, without storing it. So this needs ggez running on every computer
+you use the mouse with: turn on "Start the helper when I log in" on each, and
+use the same profile on each. A computer without ggez gets whatever the last
+one left on the mouse. Bindings without `primary` are not re-sent and work
+with no software running, as before.
+
 ### Macros
 
 A macro is a button that runs a list of steps on the computer:

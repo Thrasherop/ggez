@@ -2,9 +2,10 @@
 //!
 //! `ggez-gui` opens the window. `ggez-gui --background` runs only the
 //! helper that keeps the saved profile applied, with no window; that is
-//! what starts at login. On Windows the helper shows an icon in the
-//! notification area, and a window that closes while "start at login" is
-//! on hands the helper over to a background process so the icon stays.
+//! what starts at login. A window that closes while "start at login" is
+//! on hands the helper over to a background process, so that the helper
+//! is around from then on as it would be after logging in. On Windows the
+//! helper shows an icon in the notification area.
 
 // No console window on Windows.
 #![cfg_attr(windows, windows_subsystem = "windows")]
@@ -175,13 +176,12 @@ fn open_window() {
     }
 }
 
-/// Whether closing the window should leave the helper running behind an
-/// icon: only where there is an icon, and only if the user asked for the
-/// helper to be around by turning on "start at login".
+/// Whether closing the window should leave the helper running: only if
+/// the user asked for the helper to be around by turning on "start at
+/// login". It is then what would be running had they just logged in, with
+/// an icon on Windows and without one elsewhere.
 fn stays_after_close(helper_running_here: bool) -> bool {
-    cfg!(windows)
-        && helper_running_here
-        && autostart::location().is_ok_and(|location| location.is_some())
+    helper_running_here && autostart::location().is_ok_and(|location| location.is_some())
 }
 
 struct Window(app::App);

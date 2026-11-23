@@ -42,6 +42,43 @@ const KIND_SCROLL_DOWN: u8 = 0x32;
 const KIND_KEY: u8 = 0x51;
 const KIND_MEDIA: u8 = 0x61;
 
+/// Stands in a binding for "the key shortcuts are made with on this
+/// computer": Ctrl on Windows and Linux, Cmd on a Mac. Written `primary`.
+///
+/// The mouse cannot tell which computer it is plugged into, so this is
+/// settled when the bindings are sent, by the computer sending them. The
+/// code is from a range the HID standard leaves unused, and never reaches
+/// the mouse.
+pub const PRIMARY: u8 = 0xE8;
+
+/// The kind of computer bindings are sent from, for [`PRIMARY`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Host {
+    Mac,
+    /// Windows or Linux.
+    Pc,
+}
+
+impl Host {
+    /// The computer this program is running on.
+    pub fn this() -> Self {
+        if cfg!(target_os = "macos") {
+            Host::Mac
+        } else {
+            Host::Pc
+        }
+    }
+
+    /// The real key [`PRIMARY`] stands for here; other codes are unchanged.
+    pub fn key(self, code: u8) -> u8 {
+        match (code, self) {
+            (PRIMARY, Host::Mac) => 0xE3,
+            (PRIMARY, Host::Pc) => 0xE0,
+            (code, _) => code,
+        }
+    }
+}
+
 /// A physical control that can be rebound.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
@@ -116,7 +153,8 @@ pub enum Action {
     ScrollUp,
     ScrollDown,
     /// Up to four keyboard keys pressed together, as USB HID keyboard usage
-    /// codes; unused positions are 0. Modifiers are ordinary codes (0xE0-0xE7).
+    /// codes; unused positions are 0. Modifiers are ordinary codes
+    /// (0xE0-0xE7). [`PRIMARY`] may be among them.
     Keys([u8; 4]),
     /// A media key, as a USB HID consumer usage code.
     Media(u8),
@@ -128,8 +166,32 @@ impl Action {
         Action::Keys([code, 0, 0, 0])
     }
 
-    fn encode(self) -> [u8; SLOT_LEN] {
-        let (kind, parameter) = match self {
+    /// Whether this is Ctrl on one kind of computer and Cmd on another.
+    pub fn uses_primary(self) -> bool {
+        matches!(self, Action::Keys(keys) if keys.contains(&PRIMARY))
+    }
+
+    /// The action as a given kind of computer should send it: [`PRIMARY`]
+    /// becomes that computer's key. If the binding already holds that key
+    /// as well, it is kept once.
+    pub fn on(self, host: Host) -> Self {
+        let Action::Keys(keys) = self else {
+            return self;
+        };
+        let mut real = [0u8; 4];
+        let mut count = 0;
+        for code in keys.into_iter().filter(|&code| code != 0) {
+            let code = host.key(code);
+            if !real[..count].contains(&code) {
+                real[count] = code;
+                count += 1;
+            }
+        }
+        Action::Keys(real)
+    }
+
+    fn encode(self, host: Host) -> [u8; SLOT_LEN] {
+        let (kind, parameter) = match self.on(host) {
             Action::Disabled => (KIND_DISABLED, 0),
             Action::MouseButton(n) => (n, 0),
             Action::DpiCycle => (KIND_DPI, 0),
@@ -209,6 +271,7 @@ fn key_code(name: &str) -> Option<u8> {
         "esc" => "escape",
         "cmd" | "super" => "win",
         "rcmd" | "rsuper" => "rwin",
+        "cmdorctrl" | "ctrlorcmd" => "primary",
         other => other,
     };
     NAMED_KEYS
@@ -265,8 +328,20 @@ impl ButtonMap {
         self.slots[button.slot()]
     }
 
-    /// The packets (without report ID) that write this map to the mouse.
+    /// Whether any binding is Ctrl on one kind of computer and Cmd on
+    /// another, so that the mouse has to be told again when it moves.
+    pub fn uses_primary(&self) -> bool {
+        self.slots.iter().any(|action| action.uses_primary())
+    }
+
+    /// The packets (without report ID) that write this map to the mouse
+    /// from this computer.
     pub fn packets(&self, link: Link) -> Vec<Vec<u8>> {
+        self.packets_from(link, Host::this())
+    }
+
+    /// The packets a given kind of computer sends for this map.
+    pub fn packets_from(&self, link: Link, host: Host) -> Vec<Vec<u8>> {
         let command = match link {
             Link::Wired => COMMAND,
             Link::Wireless => COMMAND | WIRELESS_FLAG,
@@ -277,7 +352,7 @@ impl ButtonMap {
             .map(|(part, range)| {
                 let mut packet = vec![command, part as u8];
                 for action in &self.slots[range.clone()] {
-                    packet.extend(action.encode());
+                    packet.extend(action.encode(host));
                 }
                 packet.resize(PACKET_LEN, 0);
                 packet
@@ -358,7 +433,8 @@ impl fmt::Display for Action {
 }
 
 /// Names and codes of keys that are not a single letter, digit or F-key.
-const NAMED_KEYS: [(&str, u8); 27] = [
+const NAMED_KEYS: [(&str, u8); 28] = [
+    ("primary", PRIMARY),
     ("ctrl", 0xE0),
     ("shift", 0xE1),
     ("alt", 0xE2),
@@ -438,6 +514,49 @@ fn media_name(code: u8) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn primary_is_ctrl_on_a_pc_and_cmd_on_a_mac() {
+        let copy: Action = "key:primary+c".parse().unwrap();
+        assert_eq!(copy, Action::Keys([PRIMARY, 0x06, 0, 0]));
+        assert!(copy.uses_primary());
+        assert_eq!(copy.to_string(), "key:primary+c");
+        assert_eq!(copy.on(Host::Pc), "key:ctrl+c".parse().unwrap());
+        assert_eq!(copy.on(Host::Mac), "key:cmd+c".parse().unwrap());
+        // Another spelling people know it by.
+        assert_eq!("key:CmdOrCtrl+c".parse::<Action>().unwrap(), copy);
+    }
+
+    #[test]
+    fn primary_never_reaches_the_mouse() {
+        let mut map = ButtonMap::default();
+        assert!(!map.uses_primary());
+        map.set(Button::Grid(1), "key:primary+shift+z".parse().unwrap());
+        assert!(map.uses_primary());
+        for (host, real) in [(Host::Pc, 0xE0), (Host::Mac, 0xE3)] {
+            let packets = map.packets_from(Link::Wired, host);
+            assert!(packets.iter().flatten().all(|&byte| byte != PRIMARY));
+            // Side button 1 is slot 14: the third slot of the last packet.
+            assert_eq!(&packets[2][12..17], &[KIND_KEY, real, 0xE1, 0x1D, 0]);
+        }
+    }
+
+    #[test]
+    fn primary_beside_its_own_key_is_sent_once() {
+        let both: Action = "key:primary+ctrl+c".parse().unwrap();
+        assert_eq!(both.on(Host::Pc), "key:ctrl+c".parse().unwrap());
+        assert_eq!(both.on(Host::Mac), "key:cmd+ctrl+c".parse().unwrap());
+    }
+
+    #[test]
+    fn other_actions_are_the_same_everywhere() {
+        for text in ["left", "dpi", "media:mute", "key:ctrl+c", "disabled"] {
+            let action: Action = text.parse().unwrap();
+            assert!(!action.uses_primary());
+            assert_eq!(action.on(Host::Mac), action);
+            assert_eq!(action.on(Host::Pc), action);
+        }
+    }
+
     fn unpadded(packet: &[u8]) -> &[u8] {
         let len = packet.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
         &packet[..len]
@@ -507,7 +626,10 @@ mod tests {
         assert_eq!("key:0x04".parse::<Action>().unwrap(), Action::key(0x04));
         // What GG sent for Ctrl+Shift+K: 51 e1 e0 0e 00.
         assert_eq!(
-            "key:shift+ctrl+k".parse::<Action>().unwrap().encode(),
+            "key:shift+ctrl+k"
+                .parse::<Action>()
+                .unwrap()
+                .encode(Host::Pc),
             [0x51, 0xE1, 0xE0, 0x0E, 0x00]
         );
         assert!("key:a+b+c+d+e".parse::<Action>().is_err());
@@ -538,7 +660,10 @@ mod tests {
             assert_eq!(text.parse::<Action>().unwrap().to_string(), text);
         }
         // Seen in the mouse's own reports: kinds 6-8 press button bits 6-8.
-        assert_eq!("button7".parse::<Action>().unwrap().encode()[0], 0x07);
+        assert_eq!(
+            "button7".parse::<Action>().unwrap().encode(Host::Pc)[0],
+            0x07
+        );
         assert!("button9".parse::<Action>().is_err());
         for name in key_names() {
             assert!(format!("key:{name}").parse::<Action>().is_ok(), "{name}");
