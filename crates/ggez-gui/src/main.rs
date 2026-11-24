@@ -22,18 +22,23 @@ mod theme;
 mod tray;
 #[cfg(windows)]
 mod tray_windows;
+mod updates;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use eframe::egui;
+use ggez_service::update::{self, Relaunch};
 use ggez_service::{autostart, helper, paths};
 
 /// The window's title. The notification-area icon finds the window by it.
 const WINDOW_TITLE: &str = "ggez";
 
-struct DesktopHost;
+struct DesktopHost {
+    /// Where the window leaves what is to be started once it has closed.
+    relaunch: Arc<Mutex<Option<Relaunch>>>,
+}
 
 impl app::Host for DesktopHost {
     fn autostart_enabled(&self) -> Result<bool, String> {
@@ -77,6 +82,29 @@ impl app::Host for DesktopHost {
         ggez_service::macro_host::Host::ask_permission();
     }
 
+    fn can_update(&self) -> Result<(), String> {
+        update::can_install()
+    }
+
+    fn open_page(&mut self, url: &str) {
+        let mut opener = if cfg!(windows) {
+            let mut opener = std::process::Command::new("rundll32");
+            opener.arg("url.dll,FileProtocolHandler");
+            opener
+        } else if cfg!(target_os = "macos") {
+            std::process::Command::new("open")
+        } else {
+            std::process::Command::new("xdg-open")
+        };
+        let _ = opener.arg(url).spawn();
+    }
+
+    fn restart_with(&mut self, relaunch: Relaunch) {
+        if let Ok(mut place) = self.relaunch.lock() {
+            *place = Some(relaunch);
+        }
+    }
+
     fn reveal(&mut self, path: &Path) {
         let folder = path.parent().unwrap_or(path);
         let _ = std::fs::create_dir_all(folder);
@@ -91,7 +119,8 @@ impl app::Host for DesktopHost {
     }
 }
 
-/// Run the helper on this thread until the process exits.
+/// Run the helper on this thread until it is told to stop.
+#[cfg(not(windows))]
 fn run_helper_forever(profile: &Path) {
     helper::run(profile, Arc::new(AtomicBool::new(false)), |_event| {});
 }
@@ -131,6 +160,8 @@ fn run_with_icon(profile: &Path) {
             let _ = sender.send(event.clone());
         });
     });
+    let (found, newer_versions) = std::sync::mpsc::channel();
+    watch_for_updates(found);
 
     let mut state = tray::Tray::default();
     let Ok(mut icon) = Icon::new(&state.tooltip()) else {
@@ -141,8 +172,21 @@ fn run_with_icon(profile: &Path) {
     };
     let store = profile.parent().map(|dir| Store::new(dir.to_path_buf()));
     while let Some(clicks) = icon.wait(500) {
-        for event in events.try_iter() {
-            if let Some(popup) = state.on_event(&event) {
+        loop {
+            match events.try_recv() {
+                Ok(event) => {
+                    if let Some(popup) = state.on_event(&event) {
+                        icon.notify(&popup);
+                    }
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                // The helper has stopped: it was told to, so that an
+                // update can replace this program. The icon goes with it.
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return,
+            }
+        }
+        for version in newer_versions.try_iter() {
+            if let Some(popup) = state.on_newer_version(version) {
                 icon.notify(&popup);
             }
         }
@@ -176,6 +220,36 @@ fn run_with_icon(profile: &Path) {
             }
         }
     }
+}
+
+/// Look for a newer ggez now and then while only the icon is running, and
+/// report one that is found. The record is shared with the window, so
+/// between them they look once a day, and not at all if that is switched
+/// off in Settings.
+#[cfg(windows)]
+fn watch_for_updates(found: std::sync::mpsc::Sender<update::Version>) {
+    use std::time::{Duration, SystemTime};
+    use update::{Https, Record, Version};
+
+    std::thread::spawn(move || loop {
+        if let Ok(path) = Record::path() {
+            let mut record = Record::load(&path);
+            if record.due(SystemTime::now()) {
+                if let Ok(release) = update::latest(&Https) {
+                    // Read again: the setting may have changed meanwhile.
+                    record = Record::load(&path);
+                    record.found(release.version, SystemTime::now());
+                    let _ = record.save(&path);
+                }
+            }
+            if let Some(version) = record.newer_than(Version::current()) {
+                if found.send(version).is_err() {
+                    return;
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_secs(60 * 60));
+    });
 }
 
 /// Show the ggez window: the one already open, or a new one.
@@ -213,12 +287,27 @@ fn main() -> anyhow::Result<()> {
         run_background(profile_path);
         return Ok(());
     }
+    // What an update left behind once it was installed.
+    if let Ok(folder) = update::download_folder() {
+        let _ = std::fs::remove_dir_all(folder);
+    }
     // Only one helper per user; whoever holds the lock runs it.
     let lock = helper::InstanceLock::acquire().ok().flatten();
     let helper_running_here = lock.is_some();
-    if let (true, Some(path)) = (helper_running_here, profile_path.clone()) {
-        std::thread::spawn(move || run_helper_forever(&path));
-    }
+    let stop_helper = Arc::new(AtomicBool::new(false));
+    let helper_thread = match (helper_running_here, profile_path.clone()) {
+        (true, Some(path)) => {
+            let stop = stop_helper.clone();
+            Some(std::thread::spawn(move || {
+                helper::run(&path, stop, |_event| {})
+            }))
+        }
+        _ => None,
+    };
+    let relaunch = Arc::new(Mutex::new(None));
+    let host = DesktopHost {
+        relaunch: relaunch.clone(),
+    };
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -239,15 +328,33 @@ fn main() -> anyhow::Result<()> {
             theme::apply(&cc.egui_ctx);
             let ctx = cc.egui_ctx.clone();
             let worker = device::Worker::spawn(move || ctx.request_repaint());
-            Ok(Box::new(Window(app::App::new(
-                Box::new(worker),
-                Box::new(DesktopHost),
-                profile_path,
-                helper_running_here,
-            ))))
+            let ctx = cc.egui_ctx.clone();
+            let updater = updates::Worker::spawn(move || ctx.request_repaint());
+            Ok(Box::new(Window(
+                app::App::new(
+                    Box::new(worker),
+                    Box::new(host),
+                    profile_path,
+                    helper_running_here,
+                )
+                .with_updater(Box::new(updater)),
+            )))
         }),
     )
     .map_err(|e| anyhow::anyhow!("could not open the window: {e}"))?;
+    let relaunch = relaunch.lock().ok().and_then(|mut place| place.take());
+    if let Some(relaunch) = relaunch {
+        // An update takes over from here. The helper is the old program,
+        // so it finishes first: the one in this process, or one in
+        // another, which is told to stop and waited for.
+        stop_helper.store(true, Ordering::Relaxed);
+        if let Some(thread) = helper_thread {
+            let _ = thread.join();
+        }
+        drop(lock);
+        helper::stop_running(std::time::Duration::from_secs(15));
+        return relaunch.start();
+    }
     // Keep the lock until the window closes.
     drop(lock);
     if stays_after_close(helper_running_here) {

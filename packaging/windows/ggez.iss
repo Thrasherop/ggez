@@ -62,6 +62,15 @@ Name: "{autodesktop}\ggez"; Filename: "{app}\ggez-gui.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\ggez-gui.exe"; Description: "Open ggez"; Flags: nowait postinstall skipifsilent
+; When ggez updates itself it closes, runs this installer with /SILENT
+; /RELAUNCH=1, and expects to be opened again at the end.
+Filename: "{app}\ggez-gui.exe"; Flags: nowait; Check: Relaunching
+
+[Code]
+function Relaunching: Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
 
 [UninstallRun]
 ; Stop the helper and its notification-area icon, then take ggez out of

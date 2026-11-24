@@ -15,7 +15,23 @@
    downloads and attaches them to a **draft** release. It refuses a tag
    that does not match the version in `Cargo.toml`.
 4. Open the draft on the repository's Releases page, install at least one
-   of the downloads, edit the notes, and publish.
+   of the downloads, edit the notes, and publish it as the latest release.
+
+**Publishing is what offers the update.** Every ggez from 0.5.0 on looks at
+`releases/latest/download/SHA256SUMS.txt` once a day and offers its user
+whatever version that names. Three things it relies on, which a release
+must therefore keep:
+
+- `SHA256SUMS.txt` lists every download as `<sha256>  <file name>`, the
+  way `sha256sum` prints it.
+- The downloads are named `ggez-<version>-windows-x64-setup.exe`,
+  `ggez-<version>-macos.dmg` and `ggez-<version>-linux-x64.tar.gz`, with a
+  version of three plain numbers. A file named otherwise is not offered.
+- The release is tagged `v<version>`.
+
+A release that should not reach people yet stays a draft or is marked as a
+pre-release: neither is "latest". The code that does the updating is
+[crates/ggez-service/src/update.rs](../crates/ggez-service/src/update.rs).
 
 To see what a release would contain without making one, run the workflow by
 hand from the Actions tab; the files are kept as artifacts of that run.
@@ -29,7 +45,9 @@ hand from the Actions tab; the files are kept as artifacts of that run.
 | Linux | `ggez-<version>-linux-x64.tar.gz` | the workflow itself |
 
 **Windows.** The installer installs for the current user, so it does not
-ask for administrator rights. It adds a Start menu entry and an uninstaller.
+ask for administrator rights. When ggez updates itself it runs the new
+installer with `/SILENT /RELAUNCH=1`, which shows only the progress bar and
+opens ggez again at the end. It adds a Start menu entry and an uninstaller.
 Uninstalling stops the helper and removes it from the programs that start
 at login; settings in `%APPDATA%\ggez` are kept. The command-line program
 `ggez.exe` is installed next to the app but is not added to `PATH`.

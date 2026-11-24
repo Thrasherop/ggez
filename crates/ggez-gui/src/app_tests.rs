@@ -18,6 +18,12 @@ struct Shared {
     /// Where macros stand on the pretend computer; all is well if unset.
     macros_here: Option<MacrosHere>,
     asked_to_run_macros: u32,
+    /// Why the pretend ggez cannot replace itself; it can if unset.
+    cannot_update: Option<String>,
+    pages_opened: Vec<String>,
+    restarted_with: Option<Relaunch>,
+    update_requests: Vec<updates::Request>,
+    update_replies: Vec<updates::Reply>,
 }
 
 #[derive(Clone, Default)]
@@ -57,6 +63,27 @@ impl Host for Fake {
     fn ask_to_run_macros(&mut self) {
         self.0.lock().unwrap().asked_to_run_macros += 1;
     }
+    fn can_update(&self) -> Result<(), String> {
+        match &self.0.lock().unwrap().cannot_update {
+            Some(why) => Err(why.clone()),
+            None => Ok(()),
+        }
+    }
+    fn open_page(&mut self, url: &str) {
+        self.0.lock().unwrap().pages_opened.push(url.to_string());
+    }
+    fn restart_with(&mut self, relaunch: Relaunch) {
+        self.0.lock().unwrap().restarted_with = Some(relaunch);
+    }
+}
+
+impl Updater for Fake {
+    fn send(&mut self, request: updates::Request) {
+        self.0.lock().unwrap().update_requests.push(request);
+    }
+    fn poll(&mut self) -> Vec<updates::Reply> {
+        std::mem::take(&mut self.0.lock().unwrap().update_replies)
+    }
 }
 
 const CONNECTED: Status = Status::Connected {
@@ -74,19 +101,42 @@ fn temp_dir(name: &str) -> PathBuf {
 
 /// A window with a connected mouse and its profile in a scratch folder.
 fn window(name: &str) -> (Harness<'static, App>, Fake, PathBuf) {
+    window_after(name, |_, folder| {
+        // It has looked for a newer ggez today and found none, so it has
+        // no reason to look as it opens.
+        let mut record = Record::default();
+        record.found(Version::current(), std::time::SystemTime::now());
+        record.save(&folder.join("updates.toml")).unwrap();
+    })
+}
+
+/// A window on a computer where ggez has never looked for a newer version.
+fn window_that_never_looked(name: &str) -> (Harness<'static, App>, Fake, PathBuf) {
+    window_after(name, |_, _| {})
+}
+
+/// The same, after `prepare` has had its way with the pretend computer and
+/// with the folder the profile will be in.
+fn window_after(
+    name: &str,
+    prepare: impl FnOnce(&mut Shared, &std::path::Path),
+) -> (Harness<'static, App>, Fake, PathBuf) {
     let fake = Fake::default();
     fake.0
         .lock()
         .unwrap()
         .replies
         .push(Reply::Status(CONNECTED));
-    let profile = temp_dir(name).join("profile.toml");
+    let folder = temp_dir(name);
+    prepare(&mut fake.0.lock().unwrap(), &folder);
+    let profile = folder.join("profile.toml");
     let app = App::new(
         Box::new(fake.clone()),
         Box::new(fake.clone()),
         Some(profile.clone()),
         true,
-    );
+    )
+    .with_updater(Box::new(fake.clone()));
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1080.0, 760.0))
         .build_state(
@@ -1079,4 +1129,284 @@ fn a_macro_with_a_mistake_is_not_sent() {
     click(&mut harness, "Apply to mouse");
     assert!(requests(&fake).is_empty());
     harness.get_by_label_contains("the macro on g1");
+}
+
+fn version(text: &str) -> Version {
+    Version::parse(text).unwrap()
+}
+
+fn update_requests(fake: &Fake) -> Vec<updates::Request> {
+    std::mem::take(&mut fake.0.lock().unwrap().update_requests)
+}
+
+fn update_reply(harness: &mut Harness<'static, App>, fake: &Fake, reply: updates::Reply) {
+    fake.0.lock().unwrap().update_replies.push(reply);
+    harness.run_steps(3);
+}
+
+fn installer() -> Relaunch {
+    Relaunch {
+        program: PathBuf::from("ggez-9.9.9-setup"),
+        arguments: vec!["/SILENT".into()],
+        installs: true,
+    }
+}
+
+/// A window that has just been told version 9.9.9 exists.
+fn window_offered_an_update(name: &str) -> (Harness<'static, App>, Fake, PathBuf) {
+    let (mut harness, fake, profile) = window(name);
+    update_reply(
+        &mut harness,
+        &fake,
+        updates::Reply::Latest(Ok(version("9.9.9"))),
+    );
+    (harness, fake, profile)
+}
+
+#[test]
+fn a_newer_version_is_offered_and_one_click_installs_it() {
+    let (mut harness, fake, profile) = window_that_never_looked("update");
+    // Never having looked, the window looks as it opens.
+    assert_eq!(update_requests(&fake), [updates::Request::Check]);
+    assert_eq!(harness.state().update, Update::None);
+    update_reply(
+        &mut harness,
+        &fake,
+        updates::Reply::Latest(Ok(version("9.9.9"))),
+    );
+    let running = Version::current();
+    harness.get_by_label(&format!("ggez 9.9.9 is available. You have {running}."));
+    // What was found is remembered beside the profile.
+    let record = Record::load(&profile.with_file_name("updates.toml"));
+    assert_eq!(record.newer_than(running), Some(version("9.9.9")));
+    assert!(!record.due(std::time::SystemTime::now()));
+
+    click(&mut harness, "What's new");
+    assert_eq!(
+        fake.0.lock().unwrap().pages_opened,
+        ["https://github.com/Thrasherop/ggez/releases/tag/v9.9.9"]
+    );
+
+    click(&mut harness, "Update now");
+    assert_eq!(update_requests(&fake), [updates::Request::Install]);
+    harness.get_by_label("Downloading ggez 9.9.9… 0.0 MB");
+    update_reply(
+        &mut harness,
+        &fake,
+        updates::Reply::Progress {
+            received: 4_200_000,
+            total: Some(8_400_000),
+        },
+    );
+    harness.get_by_label("Downloading ggez 9.9.9… 4.2 of 8.4 MB");
+    // Nothing closes while it is still arriving.
+    assert_eq!(fake.0.lock().unwrap().restarted_with, None);
+
+    update_reply(
+        &mut harness,
+        &fake,
+        updates::Reply::Ready(Ok((version("9.9.9"), installer()))),
+    );
+    assert_eq!(fake.0.lock().unwrap().restarted_with, Some(installer()));
+    harness.get_by_label_contains("Installing ggez 9.9.9");
+}
+
+#[test]
+fn an_update_waits_for_changes_that_are_not_on_the_mouse() {
+    let (mut harness, fake, _) = window_offered_an_update("update-dirty");
+    click(&mut harness, "Update now");
+    harness.state_mut().draft.polling = 500;
+    harness.run_steps(2);
+    assert!(harness.state().is_dirty());
+    update_reply(
+        &mut harness,
+        &fake,
+        updates::Reply::Ready(Ok((version("9.9.9"), installer()))),
+    );
+    // Restarting now would throw the change away without a word.
+    assert_eq!(fake.0.lock().unwrap().restarted_with, None);
+    harness.get_by_label_contains("ggez 9.9.9 is ready");
+    harness.get_by_label_contains("will be lost");
+
+    click(&mut harness, "Restart ggez");
+    assert_eq!(fake.0.lock().unwrap().restarted_with, Some(installer()));
+}
+
+#[test]
+fn a_copy_that_cannot_replace_itself_points_to_the_download_page() {
+    let why = "This copy of ggez was not put here by its installer, so it cannot replace itself.";
+    let (mut harness, fake, _) = window_after("update-by-hand", |computer, _| {
+        computer.cannot_update = Some(why.into());
+    });
+    update_reply(
+        &mut harness,
+        &fake,
+        updates::Reply::Latest(Ok(version("9.9.9"))),
+    );
+    harness.get_by_label(why);
+    assert!(harness
+        .query_by_role_and_label(egui::accesskit::Role::Button, "Update now")
+        .is_none());
+    update_requests(&fake);
+    click(&mut harness, "Open the download page");
+    assert_eq!(
+        fake.0.lock().unwrap().pages_opened,
+        ["https://github.com/Thrasherop/ggez/releases/latest"]
+    );
+    assert!(update_requests(&fake).is_empty(), "nothing is fetched");
+}
+
+#[test]
+fn a_failed_update_says_why_and_can_be_tried_again() {
+    let (mut harness, fake, _) = window_offered_an_update("update-failed");
+    click(&mut harness, "Update now");
+    update_requests(&fake);
+    update_reply(
+        &mut harness,
+        &fake,
+        updates::Reply::Ready(Err("It did not arrive whole.".into())),
+    );
+    harness.get_by_label("ggez 9.9.9 could not be installed: It did not arrive whole.");
+    assert_eq!(fake.0.lock().unwrap().restarted_with, None);
+    // Looking again in the background does not wipe the news away.
+    update_reply(
+        &mut harness,
+        &fake,
+        updates::Reply::Latest(Ok(version("9.9.9"))),
+    );
+    harness.get_by_label_contains("could not be installed");
+
+    click(&mut harness, "Try again");
+    assert_eq!(update_requests(&fake), [updates::Request::Install]);
+    harness.get_by_label_contains("Downloading ggez 9.9.9");
+}
+
+#[test]
+fn an_update_put_away_stays_away_until_asked_for() {
+    let (mut harness, _, _) = window_offered_an_update("update-later");
+    click(&mut harness, "Not now");
+    assert!(harness
+        .query_by_label_contains("ggez 9.9.9 is available. You have")
+        .is_none());
+    // Settings still knows, and brings it back.
+    click(&mut harness, "Settings");
+    harness.get_by_label("ggez 9.9.9 is available.");
+    click(&mut harness, "Show the update");
+    harness.get_by_label_contains("ggez 9.9.9 is available. You have");
+    assert!(harness
+        .query_by_role_and_label(egui::accesskit::Role::Button, "Show the update")
+        .is_none());
+}
+
+#[test]
+fn looking_for_updates_can_be_switched_off_and_done_by_hand() {
+    let (mut harness, fake, profile) = window("update-settings");
+    let running = Version::current();
+    update_requests(&fake);
+    click(&mut harness, "Settings");
+    harness.get_by_label_contains(&format!("This is ggez {running}."));
+
+    // By hand, with no connection: the person asked, so they are told.
+    click(&mut harness, "Look now");
+    assert_eq!(update_requests(&fake), [updates::Request::Check]);
+    harness.get_by_label("Looking…");
+    update_reply(
+        &mut harness,
+        &fake,
+        updates::Reply::Latest(Err("could not reach the ggez releases".into())),
+    );
+    harness.get_by_label("Could not look for a new version: could not reach the ggez releases");
+
+    // Again, and this is the newest.
+    click(&mut harness, "Look now");
+    update_reply(&mut harness, &fake, updates::Reply::Latest(Ok(running)));
+    harness.get_by_label(&format!("ggez {running} is the newest version."));
+    assert!(harness.query_by_label_contains("is available").is_none());
+
+    // Switched off, and remembered.
+    let record = profile.with_file_name("updates.toml");
+    assert!(Record::load(&record).check);
+    harness
+        .get_by_label("Look for a new version once a day")
+        .click();
+    harness.run();
+    assert!(!Record::load(&record).check);
+}
+
+#[test]
+fn the_window_looks_at_most_once_a_day_and_not_at_all_if_told_not_to() {
+    let now = std::time::SystemTime::now();
+    let found = |latest: &str, check: bool| {
+        let mut record = Record {
+            check,
+            ..Record::default()
+        };
+        record.found(version(latest), now);
+        record
+    };
+    // Looked a moment ago and found something newer: it is offered at
+    // once, without asking the internet again.
+    let (harness, fake, _) = window_after("update-fresh", |_, folder| {
+        found("9.9.9", true)
+            .save(&folder.join("updates.toml"))
+            .unwrap();
+    });
+    assert!(update_requests(&fake).is_empty());
+    harness.get_by_label_contains("ggez 9.9.9 is available. You have");
+
+    // Looked a moment ago and found nothing newer: nothing is said.
+    let (harness, fake, _) = window_after("update-none", |_, folder| {
+        found("0.0.1", true)
+            .save(&folder.join("updates.toml"))
+            .unwrap();
+    });
+    assert!(update_requests(&fake).is_empty());
+    assert!(harness.query_by_label_contains("is available").is_none());
+
+    // Looked long ago: time to look again.
+    let (_, fake, _) = window_after("update-stale", |_, folder| {
+        let mut record = Record::default();
+        record.found(
+            version("0.0.1"),
+            now - 2 * ggez_service::update::CHECK_EVERY,
+        );
+        record.save(&folder.join("updates.toml")).unwrap();
+    });
+    assert_eq!(update_requests(&fake), [updates::Request::Check]);
+
+    // Told not to look: it does not, however long it has been.
+    let (_, fake, _) = window_after("update-off", |_, folder| {
+        let record = Record {
+            check: false,
+            ..Record::default()
+        };
+        record.save(&folder.join("updates.toml")).unwrap();
+    });
+    assert!(update_requests(&fake).is_empty());
+}
+
+#[test]
+fn an_automatic_look_that_fails_says_nothing() {
+    let (mut harness, fake, _) = window_that_never_looked("update-offline");
+    update_reply(
+        &mut harness,
+        &fake,
+        updates::Reply::Latest(Err("no connection".into())),
+    );
+    click(&mut harness, "Settings");
+    assert!(harness.query_by_label_contains("Could not look").is_none());
+    assert_eq!(harness.state().update, Update::None);
+}
+
+#[test]
+fn download_progress_is_given_in_megabytes() {
+    assert_eq!(view::download_progress(0, None), "0.0 MB");
+    assert_eq!(view::download_progress(1_250_000, None), "1.2 MB");
+    assert_eq!(
+        view::download_progress(4_200_000, Some(8_400_000)),
+        "4.2 of 8.4 MB"
+    );
+    // A total that makes no sense is left out.
+    assert_eq!(view::download_progress(9_000_000, Some(100)), "9.0 MB");
+    assert_eq!(view::download_progress(5, Some(0)), "0.0 MB");
 }

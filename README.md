@@ -74,6 +74,7 @@ ggez dim 30 --brightness 60 --smart   seconds 0-1200, percent, lights off while 
 ggez buttons g10=key:ctrl+x g11=key:ctrl+c g12=key:ctrl+v
 ggez apply my-profile.toml            everything at once
 ggez autostart enable                 start the helper at login
+ggez update                           is there a newer ggez? (--install to get it)
 ```
 
 Each command saves to the mouse's memory unless you add `--no-save`.
@@ -226,6 +227,36 @@ and choose **Open Anyway**. Each release has a `SHA256SUMS.txt` to check a
 download against. [CHANGELOG.md](CHANGELOG.md) says what changed in each
 version.
 
+### Updates
+
+After that, ggez keeps itself up to date with one click. When a newer
+version is out, a line at the top of the window says so; **Update now**
+downloads it, checks it, and restarts ggez with it. On Windows the icon by
+the clock tells you too. From a terminal, `ggez update --install` does the
+same.
+
+- **What it asks the internet.** Once a day, while the window is open or
+  the Windows icon is running, ggez asks github.com for one small file:
+  the list of downloads in the latest release. It sends nothing about you
+  or your mouse. Turn it off with **Settings → Look for a new version once
+  a day**; **Look now** still works when you ask.
+- **Nothing installs by itself.** Finding a newer version only shows the
+  line. If you have changes that are not on the mouse yet, the update
+  waits for you to apply or revert them.
+- **What is checked.** The download has to match the checksum published
+  with the release, so a file cut short or damaged on the way is thrown
+  away. That is not proof of who made it: until the downloads are signed,
+  an update is as trustworthy as github.com and this repository.
+- **Where it cannot.** A copy that was not installed (unpacked from a CI
+  run, or built from source), a Mac app that has not been moved to
+  Applications, or Linux programs in a folder you cannot write to: the
+  line then leads to the download page.
+- **On a Mac**, macOS may ask again for the permissions you gave the old
+  version (Input Monitoring, and Accessibility for macros), because the
+  downloads are not signed.
+
+### Building it yourself
+
 If the Releases page is empty, no version has been published yet: each
 [CI run](https://github.com/Thrasherop/ggez/actions) attaches the bare
 programs. Or build it yourself:
@@ -268,6 +299,7 @@ What has been tried where:
 | Bindings, zone colors and saving to the mouse | Yes | No | No |
 | Ctrl/Cmd bindings following the computer | No | No | No |
 | Macros from a real button press | No | No | Not built |
+| Updating itself with one click | Yes | No | No |
 
 "No" means the code is written and its tests pass on that system in CI,
 but nobody has yet watched it work with a mouse in hand. If you try one of
@@ -302,6 +334,11 @@ macro editor says which applies.
 **Copy pastes, or Ctrl does what Cmd should.** The mouse came from the
 other kind of computer and ggez is not running on this one to switch the
 binding over. See [One mouse, a PC and a Mac](#one-mouse-a-pc-and-a-mac).
+
+**ggez says nothing about a newer version.** It looks once a day, and
+only if **Settings → Look for a new version once a day** is on; **Look
+now** on the same page asks at once and says what it found, or why it
+could not look.
 
 **A button I did not list went back to factory.** `ggez buttons` sets all
 bindings at once, because the mouse cannot report its current ones. Use a

@@ -4,6 +4,7 @@
 
 use ggez_service::battery::{BatteryNotice, BatteryWatch};
 use ggez_service::helper::Event;
+use ggez_service::update::Version;
 
 /// One line of the icon's menu.
 #[derive(Debug, Clone, PartialEq)]
@@ -51,6 +52,8 @@ pub struct Tray {
     watch: BatteryWatch,
     /// The last profile problem shown, so it is not repeated every pass.
     bad_profile: Option<String>,
+    /// A newer version of ggez that has been found.
+    newer: Option<Version>,
 }
 
 impl Tray {
@@ -112,6 +115,20 @@ impl Tray {
         }
     }
 
+    /// A newer version of ggez has been found. Returns a pop-up the first
+    /// time each version is heard of.
+    pub fn on_newer_version(&mut self, version: Version) -> Option<Popup> {
+        if self.newer == Some(version) {
+            return None;
+        }
+        self.newer = Some(version);
+        Some(Popup {
+            title: format!("ggez {version} is available"),
+            text: "Open ggez to see what is new and install it.".into(),
+            warning: false,
+        })
+    }
+
     /// The mouse in a few words, for the tooltip and the top of the menu.
     pub fn status(&self) -> String {
         match self.mouse {
@@ -138,6 +155,15 @@ impl Tray {
                 choice: Choice::OpenWindow,
             },
         ];
+        if let Some(version) = self.newer {
+            // The window is where it is installed from.
+            items.push(Item::Entry {
+                text: format!("Update to ggez {version}…"),
+                checked: false,
+                default: false,
+                choice: Choice::OpenWindow,
+            });
+        }
         if !profiles.is_empty() {
             items.push(Item::Separator);
             items.push(Item::Label("Profile".into()));
@@ -182,6 +208,26 @@ mod tests {
         assert_eq!(tray.status(), "Aerox 9: 85%, charging");
         tray.on_event(&Event::Disconnected);
         assert_eq!(tray.status(), "Mouse asleep, off or unplugged");
+    }
+
+    #[test]
+    fn a_newer_version_pops_up_once_and_stays_in_the_menu() {
+        let mut tray = Tray::default();
+        let version = Version::parse("9.9.9").unwrap();
+        let popup = tray.on_newer_version(version).unwrap();
+        assert_eq!(popup.title, "ggez 9.9.9 is available");
+        assert!(!popup.warning);
+        assert_eq!(tray.on_newer_version(version), None, "told once");
+        let menu = tray.menu(&[], None);
+        assert!(menu.contains(&Item::Entry {
+            text: "Update to ggez 9.9.9…".into(),
+            checked: false,
+            default: false,
+            choice: Choice::OpenWindow,
+        }));
+        // A still newer one is news again.
+        let next = Version::parse("10.0.0").unwrap();
+        assert!(tray.on_newer_version(next).is_some());
     }
 
     #[test]

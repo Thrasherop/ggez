@@ -13,6 +13,9 @@ anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 fd-lock = "4"
+# Looking for and downloading a newer ggez, over HTTPS only.
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+sha2 = "0.10"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

@@ -4,10 +4,12 @@ use std::path::PathBuf;
 
 use ggez_core::{Action, Button};
 use ggez_service::profiles::Store;
+use ggez_service::update::{Record, Relaunch, Version};
 use ggez_service::Profile;
 
 use crate::device::{Device, Reply, Request, Status};
 use crate::draft::Draft;
+use crate::updates::{self, Updater};
 #[cfg(test)]
 use {
     eframe::egui,
@@ -56,6 +58,34 @@ pub trait Host {
     /// Have the system ask its user to let ggez press keys, and show them
     /// where that is allowed.
     fn ask_to_run_macros(&mut self);
+    /// Whether this copy of ggez can replace itself with a newer one. If
+    /// not, why not, in words for the person using it.
+    fn can_update(&self) -> Result<(), String>;
+    /// Show a web page in the person's browser.
+    fn open_page(&mut self, url: &str);
+    /// Start this once the window has closed: an update takes over.
+    fn restart_with(&mut self, relaunch: Relaunch);
+}
+
+/// Where the window stands with a newer version of ggez.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Update {
+    /// None is known of.
+    None,
+    Available(Version),
+    /// Being fetched; the amounts are in bytes.
+    Downloading {
+        version: Version,
+        received: u64,
+        total: Option<u64>,
+    },
+    /// Fetched and checked. It takes over when ggez restarts, and that
+    /// waits while there are changes that are not on the mouse.
+    Ready(Version),
+    Failed {
+        version: Version,
+        problem: String,
+    },
 }
 
 /// Whether this computer can run macros, and how many.
@@ -111,8 +141,26 @@ pub struct App {
     confirm_delete_profile: Option<String>,
     autostart: Result<bool, String>,
     helper_running_here: bool,
+    /// The version of ggez this is.
+    running: Version,
+    pub update: Update,
+    /// The banner about a newer version was put away for now.
+    update_dismissed: bool,
+    looking_for_update: bool,
+    /// The look that is under way was asked for, so its failure is told.
+    look_was_asked: bool,
+    look_problem: Option<String>,
+    /// What is remembered about updates between runs, and where.
+    update_record: Record,
+    update_record_path: Option<PathBuf>,
+    can_update: Result<(), String>,
+    /// What to start once the window has closed, when an update is ready.
+    relaunch: Option<Relaunch>,
+    /// The window is to close so that an update can take over.
+    closing_for_update: bool,
     device: Box<dyn Device>,
     host: Box<dyn Host>,
+    updater: Box<dyn Updater>,
 }
 
 impl App {
@@ -145,6 +193,20 @@ impl App {
         let current_profile = store.as_ref().and_then(Store::current);
         let selected_button = Button::Grid(1);
         let profile_stamp = profile_path.as_deref().and_then(modified);
+        let update_record_path = profile_path
+            .as_deref()
+            .and_then(|path| path.parent())
+            .map(|dir| dir.join("updates.toml"));
+        let update_record = update_record_path
+            .as_deref()
+            .map(Record::load)
+            .unwrap_or_default();
+        let running = Version::current();
+        // What an earlier look found is offered straight away.
+        let update = update_record
+            .newer_than(running)
+            .map_or(Update::None, Update::Available);
+        let can_update = host.can_update();
         Self {
             tab: Tab::Sensitivity,
             action_text: draft.buttons.get(selected_button).to_string(),
@@ -172,8 +234,133 @@ impl App {
             confirm_delete_profile: None,
             autostart,
             helper_running_here,
+            running,
+            update,
+            update_dismissed: false,
+            looking_for_update: false,
+            look_was_asked: false,
+            look_problem: None,
+            update_record,
+            update_record_path,
+            can_update,
+            relaunch: None,
+            closing_for_update: false,
             device,
             host,
+            updater: Box::new(updates::Offline),
+        }
+    }
+
+    /// Give the window its way to the releases page, and have it look for
+    /// a newer version if it is time to.
+    pub fn with_updater(mut self, updater: Box<dyn Updater>) -> Self {
+        self.updater = updater;
+        if self.update_record.due(std::time::SystemTime::now()) {
+            self.look_for_update(false);
+        }
+        self
+    }
+
+    /// Find out what the newest version is. `asked` says the person asked,
+    /// and so wants to hear if it could not be found out.
+    fn look_for_update(&mut self, asked: bool) {
+        self.look_was_asked |= asked;
+        if self.looking_for_update {
+            return;
+        }
+        self.looking_for_update = true;
+        self.look_was_asked = asked;
+        self.look_problem = None;
+        self.updater.send(updates::Request::Check);
+    }
+
+    /// Fetch and install the newer version that is on offer.
+    fn start_update(&mut self) {
+        let version = match &self.update {
+            Update::Available(version) | Update::Failed { version, .. } => *version,
+            _ => return,
+        };
+        self.update = Update::Downloading {
+            version,
+            received: 0,
+            total: None,
+        };
+        self.update_dismissed = false;
+        self.updater.send(updates::Request::Install);
+    }
+
+    /// Close the window so that the update that is ready can take over.
+    fn restart_for_update(&mut self) {
+        if let Some(relaunch) = self.relaunch.take() {
+            self.host.restart_with(relaunch);
+            self.closing_for_update = true;
+        }
+    }
+
+    fn save_update_record(&mut self) {
+        let Some(path) = &self.update_record_path else {
+            return;
+        };
+        if let Err(e) = self.update_record.save(path) {
+            self.notice = Notice::Bad(format!("{e:#}"));
+        }
+    }
+
+    fn handle_update_replies(&mut self) {
+        for reply in self.updater.poll() {
+            match reply {
+                updates::Reply::Latest(Ok(latest)) => {
+                    self.looking_for_update = false;
+                    self.update_record
+                        .found(latest, std::time::SystemTime::now());
+                    self.save_update_record();
+                    // A look changes what is on offer, never an update
+                    // that is already under way or has just failed.
+                    if matches!(self.update, Update::None | Update::Available(_)) {
+                        let offer = if latest > self.running {
+                            Update::Available(latest)
+                        } else {
+                            Update::None
+                        };
+                        if offer != self.update {
+                            self.update_dismissed = false;
+                        }
+                        self.update = offer;
+                    }
+                }
+                updates::Reply::Latest(Err(problem)) => {
+                    self.looking_for_update = false;
+                    if self.look_was_asked {
+                        self.look_problem = Some(problem);
+                    }
+                }
+                updates::Reply::Progress { received, total } => {
+                    if let Update::Downloading {
+                        received: so_far,
+                        total: in_all,
+                        ..
+                    } = &mut self.update
+                    {
+                        *so_far = received;
+                        *in_all = total;
+                    }
+                }
+                updates::Reply::Ready(Ok((version, relaunch))) => {
+                    self.relaunch = Some(relaunch);
+                    self.update = Update::Ready(version);
+                    self.update_dismissed = false;
+                    // Restarting throws away what has not been applied,
+                    // so that is left for the person to decide.
+                    if !self.is_dirty() && !self.applying {
+                        self.restart_for_update();
+                    }
+                }
+                updates::Reply::Ready(Err(problem)) => {
+                    if let Update::Downloading { version, .. } = self.update {
+                        self.update = Update::Failed { version, problem };
+                    }
+                }
+            }
         }
     }
 

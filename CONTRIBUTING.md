@@ -18,7 +18,10 @@ cargo clippy --all-targets -- -D warnings
 
 CI runs those four on Windows, macOS and Linux and must be green.
 
-None of the tests need a mouse. `ggez --dry-run wired <command>` prints the
+None of the tests need a mouse or the internet. One that does need the
+internet is left out unless asked for: it downloads the latest real release
+and checks it, which is worth running after touching the updater
+(`cargo test -p ggez-service real_release -- --ignored`). `ggez --dry-run wired <command>` prints the
 bytes a command would send, which is the quickest way to see what a change
 does.
 

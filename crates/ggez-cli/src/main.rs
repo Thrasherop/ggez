@@ -63,6 +63,12 @@ enum AutostartArg {
 enum Command {
     /// List every SteelSeries HID interface on this machine.
     List,
+    /// Look for a newer ggez.
+    Update {
+        /// Download the newer version, check it and install it.
+        #[arg(long)]
+        install: bool,
+    },
     /// Show battery level and charging state.
     Battery,
     /// Show the mouse's firmware version.
@@ -187,6 +193,7 @@ fn run_cli() -> Result<()> {
     let cli = Cli::parse();
     match &cli.command {
         Command::List => list(),
+        Command::Update { install } => update_command(*install),
         Command::Listen { seconds } => listen_command(*seconds),
         Command::Daemon { profile } => daemon(profile.clone()),
         Command::Autostart { action } => autostart_command(*action),
@@ -310,6 +317,59 @@ fn list() -> Result<()> {
     Ok(())
 }
 
+fn update_command(install: bool) -> Result<()> {
+    use ggez_service::update::{self, Https, Record, Version};
+
+    let running = Version::current();
+    let release = update::latest(&Https)?;
+    // The app goes by the same record, so it need not ask again today.
+    if let Ok(path) = Record::path() {
+        let mut record = Record::load(&path);
+        record.found(release.version, std::time::SystemTime::now());
+        let _ = record.save(&path);
+    }
+    if release.version <= running {
+        println!("ggez {running} is the newest version.");
+        return Ok(());
+    }
+    println!("ggez {} is available. This is {running}.", release.version);
+    println!("What changed: {}", update::notes_url(release.version));
+    if let Err(why) = update::can_install() {
+        println!("{why}");
+        println!("Download it from {}", update::downloads_url());
+        if install {
+            bail!("nothing was installed");
+        }
+        return Ok(());
+    }
+    if !install {
+        println!("To install it: ggez update --install");
+        return Ok(());
+    }
+    let mut tenths = 0;
+    let (version, relaunch) = update::download_and_install(&Https, &mut |received, total| {
+        let Some(total) = total.filter(|total| *total > 0) else {
+            return;
+        };
+        let now = received * 10 / total;
+        if now > tenths {
+            tenths = now;
+            println!("Downloaded {}%", now * 10);
+        }
+    })?;
+    // The helper is the old program; let it go before the new one arrives.
+    if !helper::stop_running(std::time::Duration::from_secs(15)) {
+        println!("The ggez helper did not stop. Quit ggez, then start it again.");
+    }
+    if relaunch.installs {
+        relaunch.start()?;
+        println!("The ggez {version} installer has taken over.");
+    } else {
+        println!("ggez {version} is installed. Open ggez again to use it.");
+    }
+    Ok(())
+}
+
 fn daemon(profile: Option<std::path::PathBuf>) -> Result<()> {
     let Some(_lock) = helper::InstanceLock::acquire()? else {
         bail!("the ggez helper is already running");
@@ -361,6 +421,7 @@ fn autostart_command(action: AutostartArg) -> Result<()> {
 fn run<T: Transport>(mouse: &mut Aerox9<T>, cli: &Cli) -> Result<()> {
     match &cli.command {
         Command::List
+        | Command::Update { .. }
         | Command::Listen { .. }
         | Command::Daemon { .. }
         | Command::Autostart { .. }

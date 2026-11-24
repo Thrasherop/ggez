@@ -11,5 +11,6 @@ pub mod macros;
 pub mod paths;
 pub mod profile;
 pub mod profiles;
+pub mod update;
 
 pub use profile::Profile;

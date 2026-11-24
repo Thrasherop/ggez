@@ -8,6 +8,30 @@ Windows 11. Each version says what in it had not been tried on a real
 mouse when it was released; the table in the
 [README](README.md#how-it-works-and-how-sure-we-are) has the current state.
 
+## 0.5.0
+
+### New
+
+- **One-click updates.** When a newer version is out, a line at the top
+  of the window says so. **Update now** downloads it, checks it against
+  the release's published checksum, and restarts ggez with it. On Windows
+  the icon by the clock announces it too, and `ggez update` does it from
+  a terminal. ggez looks once a day by asking github.com for one small
+  file and sends nothing about you; **Settings → Look for a new version
+  once a day** turns that off. Nothing is ever installed without a click,
+  and an update waits for changes you have not applied yet.
+- Before an update replaces the programs, the helper is asked to finish
+  what it is doing and stop, wherever it is running, so that no key a
+  macro holds is left down.
+
+### Not yet tried on hardware
+
+- Updating on a Mac and on Linux. Replacing the app from a real disk
+  image, and the programs from a real archive, is tested on those systems
+  in CI; the download and restart around it have only been run on
+  Windows.
+- Everything listed under 0.4.0.
+
 ## 0.4.0
 
 ### New

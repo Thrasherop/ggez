@@ -9,7 +9,7 @@ use ggez_service::macros::{Mode, MAX_MACROS};
 use ggez_service::profile::DEFAULT_LIGHTING_MODES;
 use ggez_service::Profile;
 
-use super::{App, MacrosHere, Notice, Tab};
+use super::{App, MacrosHere, Notice, Tab, Update};
 use crate::device::Status;
 use crate::draft::{snap_dpi, Draft, Effect, MAX_DPI_PRESETS, POLLING_RATES};
 use crate::mouse_view::{self, Lights, Place};
@@ -20,6 +20,10 @@ const FIRST_RUN: &str = "These are the mouse's factory settings, not what is on 
 impl App {
     pub fn ui(&mut self, ctx: &egui::Context) {
         self.handle_replies();
+        self.handle_update_replies();
+        if self.closing_for_update {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         self.capture_key(ctx);
         // A success message describes the settings as they were; once they
         // change it is stale, and the "not on the mouse yet" hint takes over.
@@ -334,8 +338,154 @@ impl App {
         }
     }
 
+    /// A newer version of ggez: that there is one, how fetching it is
+    /// going, and what is left to do.
+    fn update_banner(&mut self, ui: &mut Ui) {
+        if self.update_dismissed || self.update == Update::None {
+            return;
+        }
+        enum Do {
+            Update,
+            Restart,
+            ShowNotes(ggez_service::update::Version),
+            ShowDownloads,
+            PutAway,
+        }
+        let mut chosen = None;
+        let failed = matches!(self.update, Update::Failed { .. });
+        let edge = if failed { DANGER } else { ACCENT };
+        egui::Frame::new()
+            .fill(edge.gamma_multiply(0.07))
+            .stroke(Stroke::new(1.0, edge.gamma_multiply(0.4)))
+            .corner_radius(CornerRadius::same(theme::CONTROL_RADIUS))
+            .inner_margin(egui::Margin::symmetric(14, 12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                let say = |ui: &mut Ui, text: String| {
+                    ui.label(RichText::new(text).size(13.5));
+                };
+                match &self.update {
+                    Update::None => {}
+                    Update::Available(version) => {
+                        say(
+                            ui,
+                            format!("ggez {version} is available. You have {}.", self.running),
+                        );
+                        if let Err(why) = &self.can_update {
+                            hint(ui, why);
+                        }
+                        ui.horizontal(|ui| {
+                            if self.can_update.is_ok() {
+                                if theme::button(ui, "Update now")
+                                    .on_hover_text(
+                                        "Download it, check it, and restart ggez with it.",
+                                    )
+                                    .clicked()
+                                {
+                                    chosen = Some(Do::Update);
+                                }
+                            } else if theme::button(ui, "Open the download page").clicked() {
+                                chosen = Some(Do::ShowDownloads);
+                            }
+                            if theme::button(ui, "What's new").clicked() {
+                                chosen = Some(Do::ShowNotes(*version));
+                            }
+                            if theme::button(ui, "Not now").clicked() {
+                                chosen = Some(Do::PutAway);
+                            }
+                        });
+                    }
+                    Update::Downloading {
+                        version,
+                        received,
+                        total,
+                    } => {
+                        say(
+                            ui,
+                            format!(
+                                "Downloading ggez {version}… {}",
+                                download_progress(*received, *total)
+                            ),
+                        );
+                        let fraction = total
+                            .filter(|total| *total > 0)
+                            .map_or(0.0, |total| *received as f32 / total as f32);
+                        ui.add_space(2.0);
+                        theme::meter(ui, 6.0, fraction, ACCENT);
+                    }
+                    Update::Ready(version) if self.closing_for_update => {
+                        say(
+                            ui,
+                            format!("Installing ggez {version}. ggez closes and opens again."),
+                        );
+                    }
+                    Update::Ready(version) => {
+                        say(
+                            ui,
+                            format!(
+                                "ggez {version} is ready, and takes over when ggez restarts. Changes that are not on the mouse yet will be lost, so apply or revert them first."
+                            ),
+                        );
+                        if theme::button(ui, "Restart ggez").clicked() {
+                            chosen = Some(Do::Restart);
+                        }
+                    }
+                    Update::Failed { version, problem } => {
+                        say(
+                            ui,
+                            format!("ggez {version} could not be installed: {problem}"),
+                        );
+                        ui.horizontal(|ui| {
+                            if theme::button(ui, "Try again").clicked() {
+                                chosen = Some(Do::Update);
+                            }
+                            if theme::button(ui, "Open the download page").clicked() {
+                                chosen = Some(Do::ShowDownloads);
+                            }
+                            if theme::button(ui, "Not now").clicked() {
+                                chosen = Some(Do::PutAway);
+                            }
+                        });
+                    }
+                }
+            });
+        ui.add_space(6.0);
+        match chosen {
+            Some(Do::Update) => self.start_update(),
+            Some(Do::Restart) => self.restart_for_update(),
+            Some(Do::ShowNotes(version)) => self
+                .host
+                .open_page(&ggez_service::update::notes_url(version)),
+            Some(Do::ShowDownloads) => self.host.open_page(&ggez_service::update::downloads_url()),
+            Some(Do::PutAway) => self.update_dismissed = true,
+            None => {}
+        }
+    }
+
+    /// What the Settings page says about updates, and whether it is bad
+    /// news.
+    pub(super) fn update_status(&self) -> (bool, String) {
+        if let Some(problem) = &self.look_problem {
+            return (true, format!("Could not look for a new version: {problem}"));
+        }
+        match &self.update {
+            Update::None if self.update_record.checked.is_some() => (
+                false,
+                format!("ggez {} is the newest version.", self.running),
+            ),
+            Update::None => (false, String::new()),
+            Update::Available(version) => (false, format!("ggez {version} is available.")),
+            Update::Downloading { version, .. } => (false, format!("Downloading ggez {version}…")),
+            Update::Ready(version) => (false, format!("ggez {version} is ready.")),
+            Update::Failed { version, .. } => {
+                (true, format!("ggez {version} could not be installed."))
+            }
+        }
+    }
+
     /// Things the user should know whatever page they are on.
     fn banners(&mut self, ui: &mut Ui) {
+        self.update_banner(ui);
         if let Status::Blocked(reason) = &self.status {
             theme::callout(ui, DANGER, &blocked_advice(reason));
             ui.add_space(6.0);
@@ -1355,6 +1505,42 @@ impl App {
         theme::card(ui, |ui| {
             theme::card_title(
                 ui,
+                "Updates",
+                &format!(
+                    "This is ggez {}. Once a day ggez asks github.com whether there is a newer version. It says nothing about you or your mouse, and installs nothing until you say so.",
+                    self.running
+                ),
+            );
+            let mut look = self.update_record.check;
+            if theme::toggle(ui, &mut look, "Look for a new version once a day") {
+                self.update_record.check = look;
+                self.save_update_record();
+            }
+            ui.horizontal(|ui| {
+                if self.looking_for_update {
+                    ui.spinner();
+                    ui.label("Looking…");
+                } else if theme::button(ui, "Look now").clicked() {
+                    self.look_for_update(true);
+                }
+                if self.update_dismissed
+                    && self.update != Update::None
+                    && theme::button(ui, "Show the update").clicked()
+                {
+                    self.update_dismissed = false;
+                }
+                let (bad, status) = self.update_status();
+                if !self.looking_for_update && !status.is_empty() {
+                    let color = if bad { DANGER } else { TEXT_DIM };
+                    ui.add(egui::Label::new(RichText::new(status).color(color)).wrap());
+                }
+            });
+        });
+
+        ui.add_space(6.0);
+        theme::card(ui, |ui| {
+            theme::card_title(
+                ui,
                 "Profile file",
                 "Your settings are kept in a plain text file that you can copy to another computer.",
             );
@@ -1665,6 +1851,17 @@ fn choice_about(ui: &mut Ui, selected: bool, text: &str, about: &str) -> bool {
 /// What the modifier that follows the computer is, in a sentence.
 const PRIMARY_ABOUT: &str =
     "Ctrl on Windows and Linux, Cmd on a Mac: the key shortcuts such as copy are made with on each.";
+
+/// How far a download has come, in megabytes: "3.2 of 8.9 MB".
+pub(super) fn download_progress(received: u64, total: Option<u64>) -> String {
+    let megabytes = |bytes: u64| format!("{:.1}", bytes as f64 / 1_000_000.0);
+    match total {
+        Some(total) if total >= received && total > 0 => {
+            format!("{} of {} MB", megabytes(received), megabytes(total))
+        }
+        _ => format!("{} MB", megabytes(received)),
+    }
+}
 
 /// What to say under a macro's steps about running it on this computer.
 #[derive(Debug, PartialEq, Eq)]

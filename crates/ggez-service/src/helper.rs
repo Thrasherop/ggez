@@ -240,10 +240,80 @@ impl InstanceLock {
     }
 }
 
-/// Run the helper until `stop` is set. `on_event` receives everything the
+/// Whether a helper is running, in this process or any other of this
+/// user's.
+pub fn is_running() -> bool {
+    let Ok(file) = crate::paths::lock_path().and_then(|path| {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .with_context(|| format!("could not open {}", path.display()))
+    }) else {
+        // No lock file: no helper has ever run.
+        return false;
+    };
+    let mut lock = fd_lock::RwLock::new(file);
+    let taken = matches!(lock.try_write(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock);
+    taken
+}
+
+/// Tell the helper that is running to stop, wherever it is, and wait up
+/// to `wait` for it to have done so. Returns whether no helper is left.
+///
+/// An update needs this: the helper is the old program, and on Windows
+/// its file cannot be replaced while it runs. The helper looks for the
+/// request once on each pass, so it takes a moment.
+pub fn stop_running(wait: Duration) -> bool {
+    let asked =
+        crate::paths::stop_path().and_then(|path| Ok(ask_to_stop(&path, SystemTime::now())?));
+    if asked.is_err() {
+        return !is_running();
+    }
+    let deadline = std::time::Instant::now() + wait;
+    loop {
+        if !is_running() {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Nanoseconds since 1970, which is how a request to stop is dated.
+fn nanoseconds(time: SystemTime) -> u128 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos())
+}
+
+/// Leave a request to stop, made at `now`, in the file `request`. The time
+/// is written into the file. The file's own date would do on most systems,
+/// but Windows does not always move it when a file is written again with
+/// what it already held.
+fn ask_to_stop(request: &Path, now: SystemTime) -> std::io::Result<()> {
+    if let Some(folder) = request.parent() {
+        std::fs::create_dir_all(folder)?;
+    }
+    std::fs::write(request, nanoseconds(now).to_string())
+}
+
+/// Whether a request to stop was made after `started`. An older one was
+/// meant for an earlier helper.
+fn told_to_stop(request: &Path, started: SystemTime) -> bool {
+    std::fs::read_to_string(request)
+        .ok()
+        .and_then(|asked| asked.trim().parse::<u128>().ok())
+        .is_some_and(|asked| asked > nanoseconds(started))
+}
+
+/// Run the helper until `stop` is set, or until it is told to stop by
+/// [`stop_running`]. `on_event` receives everything the
 /// helper does, for logging.
 pub fn run(profile_path: &Path, stop: Arc<AtomicBool>, mut on_event: impl FnMut(&Event)) {
     let mut helper = Helper::new(profile_path.to_path_buf());
+    let started = SystemTime::now();
+    let stop_request = crate::paths::stop_path().ok();
     let mut mouse = None;
     // Macros run whether or not the mouse can be reached for settings: its
     // buttons keep sending their keys either way. The engine that runs
@@ -253,6 +323,12 @@ pub fn run(profile_path: &Path, stop: Arc<AtomicBool>, mut on_event: impl FnMut(
     let mut told = macros_event(&Plan::default(), false, Host::supported());
     let mut plan = Plan::default();
     while !stop.load(Ordering::Relaxed) {
+        if stop_request
+            .as_deref()
+            .is_some_and(|request| told_to_stop(request, started))
+        {
+            break;
+        }
         // Looking for the device means listing every HID device on the
         // machine, so keep it open while it is reachable.
         if mouse.is_none() {
@@ -294,6 +370,32 @@ pub fn run(profile_path: &Path, stop: Arc<AtomicBool>, mut on_event: impl FnMut(
 mod tests {
     use super::*;
     use ggez_core::{Link, MockTransport};
+
+    #[test]
+    fn a_request_to_stop_is_for_the_helper_that_was_running_when_it_was_made() {
+        let folder = std::env::temp_dir().join(format!("ggez-stop-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let request = folder.join("helper.stop");
+        let _ = std::fs::remove_file(&request);
+        let now = SystemTime::now();
+        let at = |seconds: u64| now + Duration::from_secs(seconds);
+        assert!(!told_to_stop(&request, at(0)), "nobody has asked");
+        ask_to_stop(&request, at(10)).unwrap();
+        assert!(told_to_stop(&request, at(0)), "asked while it ran");
+        assert!(!told_to_stop(&request, at(20)), "asked before it started");
+        assert!(!told_to_stop(&request, at(10)), "asked as it started");
+        // Asked again, with the file already there: the helper that
+        // started after the first request is told by the second. This is
+        // what a second update on the same computer does.
+        ask_to_stop(&request, at(30)).unwrap();
+        assert!(told_to_stop(&request, at(20)));
+        // A file that holds something else asks for nothing.
+        std::fs::write(&request, "").unwrap();
+        assert!(!told_to_stop(&request, at(0)));
+        std::fs::write(&request, "soon").unwrap();
+        assert!(!told_to_stop(&request, at(0)));
+        let _ = std::fs::remove_dir_all(&folder);
+    }
 
     #[test]
     fn what_is_said_about_macros_follows_the_profile_and_the_engine() {
