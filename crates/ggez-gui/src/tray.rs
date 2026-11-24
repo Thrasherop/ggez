@@ -99,7 +99,13 @@ impl Tray {
             Event::Failed(_) | Event::Macros(_) => None,
             Event::MacrosUnavailable => Some(Popup {
                 title: "Macros are not running".into(),
-                text: "Your profile has macros, but ggez can only run them on Windows so far."
+                text: "Your profile has macros, but ggez cannot run them on this system yet."
+                    .into(),
+                warning: true,
+            }),
+            Event::MacrosNeedPermission => Some(Popup {
+                title: "Macros are not running".into(),
+                text: "ggez is not allowed to press keys yet. Open ggez to see how to allow it."
                     .into(),
                 warning: true,
             }),

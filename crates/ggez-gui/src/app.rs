@@ -51,6 +51,22 @@ pub trait Host {
     fn pick_save_path(&mut self) -> Option<PathBuf>;
     fn pick_open_path(&mut self) -> Option<PathBuf>;
     fn reveal(&mut self, path: &std::path::Path);
+    /// Where macros stand on this computer, as of now.
+    fn macros_here(&self) -> MacrosHere;
+    /// Have the system ask its user to let ggez press keys, and show them
+    /// where that is allowed.
+    fn ask_to_run_macros(&mut self);
+}
+
+/// Whether this computer can run macros, and how many.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MacrosHere {
+    /// ggez knows how to run macros on this kind of system.
+    pub supported: bool,
+    /// The system lets ggez catch and press keys. A Mac asks its user.
+    pub permitted: bool,
+    /// How many buttons can have a macro here.
+    pub limit: usize,
 }
 
 pub struct App {

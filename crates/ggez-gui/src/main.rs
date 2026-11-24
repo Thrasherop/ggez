@@ -64,6 +64,19 @@ impl app::Host for DesktopHost {
             .pick_file()
     }
 
+    fn macros_here(&self) -> app::MacrosHere {
+        use ggez_service::macro_host::Host;
+        app::MacrosHere {
+            supported: Host::supported(),
+            permitted: Host::permitted(),
+            limit: Host::max_macros(),
+        }
+    }
+
+    fn ask_to_run_macros(&mut self) {
+        ggez_service::macro_host::Host::ask_permission();
+    }
+
     fn reveal(&mut self, path: &Path) {
         let folder = path.parent().unwrap_or(path);
         let _ = std::fs::create_dir_all(folder);

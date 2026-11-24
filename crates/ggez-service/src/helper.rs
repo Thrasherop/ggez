@@ -48,6 +48,21 @@ pub enum Event {
     Macros(usize),
     /// The profile has macros, but they cannot run on this system.
     MacrosUnavailable,
+    /// The profile has macros, and they will run once the user lets ggez
+    /// catch and press keys: on a Mac, under Accessibility.
+    MacrosNeedPermission,
+}
+
+/// What to say about macros, given the ones the profile asks for and
+/// whether the engine that runs them is going.
+fn macros_event(wanted: &Plan, running: bool, supported: bool) -> Event {
+    if running || wanted.is_empty() {
+        Event::Macros(wanted.macros.len())
+    } else if supported {
+        Event::MacrosNeedPermission
+    } else {
+        Event::MacrosUnavailable
+    }
 }
 
 /// Tracks what has already been applied so that each pass does only what
@@ -231,8 +246,11 @@ pub fn run(profile_path: &Path, stop: Arc<AtomicBool>, mut on_event: impl FnMut(
     let mut helper = Helper::new(profile_path.to_path_buf());
     let mut mouse = None;
     // Macros run whether or not the mouse can be reached for settings: its
-    // buttons keep sending their keys either way.
-    let host = Host::start();
+    // buttons keep sending their keys either way. The engine that runs
+    // them is only there while the profile has some, so that a profile
+    // without macros has nothing watching the keyboard.
+    let mut host: Option<Host> = None;
+    let mut told = macros_event(&Plan::default(), false, Host::supported());
     let mut plan = Plan::default();
     while !stop.load(Ordering::Relaxed) {
         // Looking for the device means listing every HID device on the
@@ -244,16 +262,25 @@ pub fn run(profile_path: &Path, stop: Arc<AtomicBool>, mut on_event: impl FnMut(
             on_event(&event);
         }
         let wanted = helper.macro_plan();
-        if wanted != plan {
-            match &host {
-                Some(host) => {
-                    host.set_plan(wanted.clone());
-                    on_event(&Event::Macros(wanted.macros.len()));
-                }
-                None => on_event(&Event::MacrosUnavailable),
+        if wanted.is_empty() {
+            host = None;
+        } else if host.is_none() {
+            // Tried again on every pass: on a Mac it fails until the user
+            // has given permission, which they may do at any time.
+            host = Host::start();
+            if host.is_some() {
+                plan = Plan::default();
             }
-            plan = wanted;
         }
+        if let (Some(host), true) = (&host, wanted != plan) {
+            host.set_plan(wanted.clone());
+        }
+        let event = macros_event(&wanted, host.is_some(), Host::supported());
+        if wanted != plan || event != told {
+            on_event(&event);
+            told = event;
+        }
+        plan = wanted;
         // Unreachable: it may have been unplugged, or a cable may have
         // replaced the dongle. Look again next time.
         if !helper.online {
@@ -267,6 +294,25 @@ pub fn run(profile_path: &Path, stop: Arc<AtomicBool>, mut on_event: impl FnMut(
 mod tests {
     use super::*;
     use ggez_core::{Link, MockTransport};
+
+    #[test]
+    fn what_is_said_about_macros_follows_the_profile_and_the_engine() {
+        let spec = crate::macros::MacroSpec {
+            mode: None,
+            steps: vec!["key:a".into()],
+        };
+        let specs = std::collections::BTreeMap::from([("g1".to_string(), spec)]);
+        let one = Plan::new(Some(&specs)).unwrap();
+        let none = Plan::default();
+        assert_eq!(macros_event(&one, true, true), Event::Macros(1));
+        // No macros is not a problem anywhere.
+        assert_eq!(macros_event(&none, false, false), Event::Macros(0));
+        assert_eq!(macros_event(&none, false, true), Event::Macros(0));
+        // Macros that cannot start: the system has to allow them, or
+        // cannot run them at all.
+        assert_eq!(macros_event(&one, false, true), Event::MacrosNeedPermission);
+        assert_eq!(macros_event(&one, false, false), Event::MacrosUnavailable);
+    }
 
     /// A dongle whose link state the test controls. Acknowledges everything.
     struct FakeDongle {

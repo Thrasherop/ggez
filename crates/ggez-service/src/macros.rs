@@ -495,9 +495,130 @@ pub fn scan_code(usage: u8) -> Option<(u16, bool)> {
     }
 }
 
+/// The Mac's own number for a key ("virtual key code"), given the key's
+/// USB HID usage code. A Mac has no Print Screen, Scroll Lock or Insert; it
+/// reads those keys as F13, F14 and Help, and so does this. It knows no
+/// F21 to F24 at all.
+pub fn mac_key_code(usage: u8) -> Option<u16> {
+    const LETTERS: [u16; 26] = [
+        0x00, 0x0B, 0x08, 0x02, 0x0E, 0x03, 0x05, 0x04, 0x22, 0x26, 0x28, 0x25, 0x2E, 0x2D, 0x1F,
+        0x23, 0x0C, 0x0F, 0x01, 0x11, 0x20, 0x09, 0x0D, 0x07, 0x10, 0x06,
+    ];
+    const DIGITS: [u16; 10] = [0x12, 0x13, 0x14, 0x15, 0x17, 0x16, 0x1A, 0x1C, 0x19, 0x1D];
+    const F_KEYS: [u16; 12] = [
+        0x7A, 0x78, 0x63, 0x76, 0x60, 0x61, 0x62, 0x64, 0x65, 0x6D, 0x67, 0x6F,
+    ];
+    const HIGH_F_KEYS: [u16; 8] = [0x69, 0x6B, 0x71, 0x6A, 0x40, 0x4F, 0x50, 0x5A];
+    const KEYPAD_DIGITS: [u16; 9] = [0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5B, 0x5C];
+    Some(match usage {
+        0x04..=0x1D => LETTERS[usize::from(usage - 0x04)],
+        0x1E..=0x27 => DIGITS[usize::from(usage - 0x1E)],
+        0x28 => 0x24,
+        0x29 => 0x35,
+        0x2A => 0x33,
+        0x2B => 0x30,
+        0x2C => 0x31,
+        0x2D => 0x1B,
+        0x2E => 0x18,
+        0x2F => 0x21,
+        0x30 => 0x1E,
+        0x31 => 0x2A,
+        0x33 => 0x29,
+        0x34 => 0x27,
+        0x35 => 0x32,
+        0x36 => 0x2B,
+        0x37 => 0x2F,
+        0x38 => 0x2C,
+        0x39 => 0x39,
+        0x3A..=0x45 => F_KEYS[usize::from(usage - 0x3A)],
+        0x46 => 0x69,
+        0x47 => 0x6B,
+        0x49 => 0x72,
+        0x4A => 0x73,
+        0x4B => 0x74,
+        0x4C => 0x75,
+        0x4D => 0x77,
+        0x4E => 0x79,
+        0x4F => 0x7C,
+        0x50 => 0x7B,
+        0x51 => 0x7D,
+        0x52 => 0x7E,
+        0x53 => 0x47,
+        0x54 => 0x4B,
+        0x55 => 0x43,
+        0x56 => 0x4E,
+        0x57 => 0x45,
+        0x58 => 0x4C,
+        0x59..=0x61 => KEYPAD_DIGITS[usize::from(usage - 0x59)],
+        0x62 => 0x52,
+        0x63 => 0x41,
+        0x68..=0x6F => HIGH_F_KEYS[usize::from(usage - 0x68)],
+        0xE0 => 0x3B,
+        0xE1 => 0x38,
+        0xE2 => 0x3A,
+        0xE3 => 0x37,
+        0xE4 => 0x3E,
+        0xE5 => 0x3C,
+        0xE6 => 0x3D,
+        0xE7 => 0x36,
+        _ => return None,
+    })
+}
+
+/// The trigger key a Mac means by one of its key codes, if any: the
+/// reverse of [`mac_key_code`] for F13 to F20.
+pub fn mac_trigger(key_code: u16) -> Option<u8> {
+    TRIGGER_KEYS
+        .clone()
+        .find(|&usage| mac_key_code(usage) == Some(key_code))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mac_has_a_code_for_every_key_but_f21_to_f24() {
+        let mut seen = std::collections::BTreeMap::new();
+        for usage in 0..=u8::MAX {
+            let (pc, mac) = (scan_code(usage), mac_key_code(usage));
+            if (0x70..=0x73).contains(&usage) {
+                assert_eq!(mac, None, "F21 to F24");
+                continue;
+            }
+            assert_eq!(pc.is_some(), mac.is_some(), "usage {usage:#04x}");
+            if let Some(code) = mac {
+                seen.entry(code).or_insert_with(Vec::new).push(usage);
+            }
+        }
+        // Two keys share a code only where a Mac reads one as the other.
+        let shared: Vec<Vec<u8>> = seen.into_values().filter(|keys| keys.len() > 1).collect();
+        assert_eq!(
+            shared,
+            [vec![0x46, 0x68], vec![0x47, 0x69]],
+            "Print Screen and Scroll Lock are F13 and F14"
+        );
+        // Spot checks against Apple's table.
+        assert_eq!(mac_key_code(0x04), Some(0x00), "A");
+        assert_eq!(mac_key_code(0x06), Some(0x08), "C");
+        assert_eq!(mac_key_code(0x19), Some(0x09), "V");
+        assert_eq!(mac_key_code(0x22), Some(0x17), "5");
+        assert_eq!(mac_key_code(0x28), Some(0x24), "Return");
+        assert_eq!(mac_key_code(0x2C), Some(0x31), "Space");
+        assert_eq!(mac_key_code(0x3A), Some(0x7A), "F1");
+        assert_eq!(mac_key_code(0x4C), Some(0x75), "Forward Delete");
+        assert_eq!(mac_key_code(0x52), Some(0x7E), "Up");
+        assert_eq!(mac_key_code(0xE3), Some(0x37), "Command");
+    }
+
+    #[test]
+    fn a_mac_can_report_eight_trigger_keys() {
+        let known: Vec<u8> = (0..=0x7Fu16).filter_map(mac_trigger).collect();
+        assert_eq!(known.len(), 8);
+        assert_eq!(mac_trigger(0x69), Some(0x68), "F13");
+        assert_eq!(mac_trigger(0x5A), Some(0x6F), "F20");
+        assert_eq!(mac_trigger(0x00), None, "A is not a trigger");
+    }
 
     fn spec(mode: Option<&str>, steps: &[&str]) -> MacroSpec {
         MacroSpec {

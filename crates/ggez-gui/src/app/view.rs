@@ -5,12 +5,11 @@ use eframe::egui::{
     Stroke, Ui, WidgetInfo, WidgetType,
 };
 use ggez_core::{key_names, media_names, Action, Button, ButtonMap, Link};
-use ggez_service::macro_host::Host;
 use ggez_service::macros::{Mode, MAX_MACROS};
 use ggez_service::profile::DEFAULT_LIGHTING_MODES;
 use ggez_service::Profile;
 
-use super::{App, Notice, Tab};
+use super::{App, MacrosHere, Notice, Tab};
 use crate::device::Status;
 use crate::draft::{snap_dpi, Draft, Effect, MAX_DPI_PRESETS, POLLING_RATES};
 use crate::mouse_view::{self, Lights, Place};
@@ -704,6 +703,13 @@ impl App {
     fn macro_editor(&mut self, ui: &mut Ui) {
         let name = self.selected_button.to_string();
         let count = self.draft.macros.len();
+        // Which of the macro buttons this is, counted the way the mouse
+        // is laid out: that is the order they are given their keys in.
+        let place = Button::ALL
+            .iter()
+            .filter(|button| self.draft.has_macro(**button))
+            .position(|button| *button == self.selected_button)
+            .map_or(1, |index| index + 1);
         let Some(entry) = self.draft.macros.get_mut(&name) else {
             return;
         };
@@ -752,18 +758,23 @@ impl App {
             );
         }
         ui.add_space(2.0);
-        if Host::supported() {
-            theme::callout(
-                ui,
-                TEXT_DIM,
-                "A macro runs on this computer, so it works only while ggez is running. Other bindings live on the mouse.",
-            );
-        } else {
-            theme::callout(
-                ui,
-                WARNING,
-                "ggez can run macros on Windows only so far. On this computer the button will do nothing.",
-            );
+        let here = self.host.macros_here();
+        match macro_note(here, place) {
+            MacroNote::Fine(text) => theme::callout(ui, TEXT_DIM, text),
+            MacroNote::Warning(text) => theme::callout(ui, WARNING, &text),
+            MacroNote::NeedsPermission(text) => {
+                theme::callout(ui, WARNING, text);
+                if ui
+                    .add(egui::Button::new("Open Accessibility settings").min_size(vec2(0.0, 32.0)))
+                    .clicked()
+                {
+                    self.host.ask_to_run_macros();
+                }
+                // The answer changes outside this window, so look again
+                // soon without waiting for the pointer to move.
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_secs(1));
+            }
         }
     }
 
@@ -1654,6 +1665,40 @@ fn choice_about(ui: &mut Ui, selected: bool, text: &str, about: &str) -> bool {
 /// What the modifier that follows the computer is, in a sentence.
 const PRIMARY_ABOUT: &str =
     "Ctrl on Windows and Linux, Cmd on a Mac: the key shortcuts such as copy are made with on each.";
+
+/// What to say under a macro's steps about running it on this computer.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum MacroNote {
+    Fine(&'static str),
+    Warning(String),
+    /// The system has to be told to let ggez press keys; the note comes
+    /// with a button that leads there.
+    NeedsPermission(&'static str),
+}
+
+/// `place` is which of the macro buttons this one is, from 1, in the order
+/// the buttons sit on the mouse.
+pub(super) fn macro_note(here: MacrosHere, place: usize) -> MacroNote {
+    if !here.supported {
+        MacroNote::Warning(
+            "ggez can run macros on Windows and macOS only so far. On this computer the button will do nothing."
+                .into(),
+        )
+    } else if !here.permitted {
+        MacroNote::NeedsPermission(
+            "macOS has to allow ggez to press keys before a macro can run. Switch ggez on under Accessibility; macros then start by themselves.",
+        )
+    } else if place > here.limit {
+        MacroNote::Warning(format!(
+            "Only the first {} macro buttons work on a Mac, and this is number {place}. It will work on Windows.",
+            here.limit
+        ))
+    } else {
+        MacroNote::Fine(
+            "A macro runs on this computer, so it works only while ggez is running. Other bindings live on the mouse.",
+        )
+    }
+}
 
 /// What someone using that modifier needs to know to rely on it.
 pub(super) fn primary_note(starts_at_login: bool) -> String {

@@ -15,6 +15,9 @@ struct Shared {
     autostart: bool,
     save_path: Option<PathBuf>,
     open_path: Option<PathBuf>,
+    /// Where macros stand on the pretend computer; all is well if unset.
+    macros_here: Option<MacrosHere>,
+    asked_to_run_macros: u32,
 }
 
 #[derive(Clone, Default)]
@@ -44,6 +47,16 @@ impl Host for Fake {
         self.0.lock().unwrap().open_path.clone()
     }
     fn reveal(&mut self, _path: &std::path::Path) {}
+    fn macros_here(&self) -> MacrosHere {
+        self.0.lock().unwrap().macros_here.unwrap_or(MacrosHere {
+            supported: true,
+            permitted: true,
+            limit: 12,
+        })
+    }
+    fn ask_to_run_macros(&mut self) {
+        self.0.lock().unwrap().asked_to_run_macros += 1;
+    }
 }
 
 const CONNECTED: Status = Status::Connected {
@@ -770,6 +783,101 @@ fn a_shortcut_can_follow_the_computer() {
         .is_none());
 }
 
+/// The Buttons page with a macro on side button 7, on a computer where
+/// macros stand as given.
+fn macro_editor_on(name: &str, here: MacrosHere) -> (Harness<'static, App>, Fake) {
+    let (mut harness, fake, _) = window(name);
+    fake.0.lock().unwrap().macros_here = Some(here);
+    click(&mut harness, "Buttons");
+    click(&mut harness, "Side button 7");
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "What it does")
+        .click();
+    harness.run();
+    harness.get_by_label("Macro: several steps").click();
+    harness.run();
+    (harness, fake)
+}
+
+#[test]
+fn a_mac_that_has_not_allowed_macros_says_how_to() {
+    let mut here = MacrosHere {
+        supported: true,
+        permitted: false,
+        limit: 8,
+    };
+    let (mut harness, fake) = macro_editor_on("macro-permission", here);
+    harness.get_by_label_contains("macOS has to allow ggez to press keys");
+    click(&mut harness, "Open Accessibility settings");
+    assert_eq!(fake.0.lock().unwrap().asked_to_run_macros, 1);
+
+    // Allowed in the system's settings while the window is open: the note
+    // goes back to the ordinary one without anything being clicked.
+    here.permitted = true;
+    fake.0.lock().unwrap().macros_here = Some(here);
+    harness.run_steps(2);
+    harness.get_by_label_contains("works only while ggez is running");
+    assert!(harness
+        .query_by_role_and_label(egui::accesskit::Role::Button, "Open Accessibility settings")
+        .is_none());
+}
+
+#[test]
+fn a_system_that_cannot_run_macros_says_so() {
+    let here = MacrosHere {
+        supported: false,
+        permitted: true,
+        limit: 0,
+    };
+    let (harness, _) = macro_editor_on("macro-unsupported", here);
+    harness.get_by_label_contains("on Windows and macOS only so far");
+}
+
+#[test]
+fn the_macro_note_counts_buttons_the_way_the_mouse_is_laid_out() {
+    let mac = MacrosHere {
+        supported: true,
+        permitted: true,
+        limit: 8,
+    };
+    assert!(matches!(view::macro_note(mac, 8), view::MacroNote::Fine(_)));
+    let view::MacroNote::Warning(ninth) = view::macro_note(mac, 9) else {
+        panic!("the ninth macro button does not work on a Mac");
+    };
+    assert!(
+        ninth.contains("first 8") && ninth.contains("number 9"),
+        "{ninth}"
+    );
+    // Permission comes before the count: nothing works without it.
+    let unasked = MacrosHere {
+        permitted: false,
+        ..mac
+    };
+    assert!(matches!(
+        view::macro_note(unasked, 9),
+        view::MacroNote::NeedsPermission(_)
+    ));
+
+    // In the window: nine macros, and the last one on the mouse is told.
+    let (mut harness, _) = macro_editor_on("macro-ninth", mac);
+    for button in 1..=6 {
+        let seventh = harness.state().draft.macros["g7"].clone();
+        let macros = &mut harness.state_mut().draft.macros;
+        macros.insert(format!("g{button}"), seventh);
+    }
+    harness.run_steps(2);
+    harness.get_by_label_contains("works only while ggez is running");
+    for button in 8..=9 {
+        let seventh = harness.state().draft.macros["g7"].clone();
+        let macros = &mut harness.state_mut().draft.macros;
+        macros.insert(format!("g{button}"), seventh);
+    }
+    click(&mut harness, "Side button 9");
+    harness.get_by_label_contains("this is number 9");
+    click(&mut harness, "Side button 8");
+    harness.get_by_label_contains("works only while ggez is running");
+}
+
 #[test]
 fn the_note_on_a_following_shortcut_knows_about_start_at_login() {
     assert!(view::primary_note(true).contains("taken care of"));
@@ -909,11 +1017,7 @@ fn a_button_can_be_given_a_macro_and_applied() {
     assert!(harness.state().draft.has_macro(Button::Grid(7)));
     assert!(harness.state().is_dirty());
     // The note under the steps says where macros can run.
-    harness.get_by_label_contains(if ggez_service::macro_host::Host::supported() {
-        "works only while ggez is running"
-    } else {
-        "on Windows only so far"
-    });
+    harness.get_by_label_contains("works only while ggez is running");
 
     // What is typed is checked as it is typed.
     harness
