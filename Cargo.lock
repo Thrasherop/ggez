@@ -1418,7 +1418,7 @@ dependencies = [
 
 [[package]]
 name = "ggez-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1428,7 +1428,7 @@ dependencies = [
 
 [[package]]
 name = "ggez-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "hidapi",
  "thiserror 2.0.21",
@@ -1436,7 +1436,7 @@ dependencies = [
 
 [[package]]
 name = "ggez-gui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "eframe",
@@ -1450,7 +1450,7 @@ dependencies = [
 
 [[package]]
 name = "ggez-service"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "core-foundation 0.10.1",
