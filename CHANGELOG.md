@@ -8,6 +8,15 @@ Windows 11. Each version says what in it had not been tried on a real
 mouse when it was released; the table in the
 [README](README.md#how-it-works-and-how-sure-we-are) has the current state.
 
+## Not yet released
+
+### Fixed
+
+- After an update on Windows, the installer that was downloaded is deleted
+  once it has finished. It used to stay until ggez was next opened,
+  because ggez opens again while the installer is still running and its
+  file cannot be deleted until then.
+
 ## 0.5.0
 
 ### New

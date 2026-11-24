@@ -287,10 +287,6 @@ fn main() -> anyhow::Result<()> {
         run_background(profile_path);
         return Ok(());
     }
-    // What an update left behind once it was installed.
-    if let Ok(folder) = update::download_folder() {
-        let _ = std::fs::remove_dir_all(folder);
-    }
     // Only one helper per user; whoever holds the lock runs it.
     let lock = helper::InstanceLock::acquire().ok().flatten();
     let helper_running_here = lock.is_some();
