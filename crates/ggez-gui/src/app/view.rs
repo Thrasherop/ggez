@@ -1138,7 +1138,8 @@ impl App {
         }
         text.push_str(&name);
         if let Ok(action) = text.parse::<Action>() {
-            self.set_action(action);
+            let held = self.draft.buttons.get(self.selected_button);
+            self.set_action(keeping_modifiers(action, held));
         }
         self.capturing_key = false;
     }
@@ -1851,6 +1852,28 @@ fn choice_about(ui: &mut Ui, selected: bool, text: &str, about: &str) -> bool {
 /// What the modifier that follows the computer is, in a sentence.
 const PRIMARY_ABOUT: &str =
     "Ctrl on Windows and Linux, Cmd on a Mac: the key shortcuts such as copy are made with on each.";
+
+/// What "Press to set" makes of a key press, given the binding the button
+/// had. A key pressed by itself replaces the key and keeps the modifiers
+/// chosen under "Held with", Ctrl/Cmd among them: no keyboard has a
+/// Ctrl/Cmd key to press. A key pressed with modifiers is a whole shortcut,
+/// and replaces the binding.
+pub(super) fn keeping_modifiers(pressed: Action, had: Action) -> Action {
+    let is_modifier = |code: u8| (0xE0..=ggez_core::PRIMARY).contains(&code);
+    let (Action::Keys(pressed_keys), Action::Keys(had_keys)) = (pressed, had) else {
+        return pressed;
+    };
+    if pressed_keys.iter().any(|&code| is_modifier(code)) {
+        return pressed;
+    }
+    let held = had_keys.into_iter().filter(|&code| is_modifier(code));
+    let keys = pressed_keys.into_iter().filter(|&code| code != 0);
+    let mut codes = [0u8; 4];
+    for (slot, code) in codes.iter_mut().zip(held.chain(keys)) {
+        *slot = code;
+    }
+    Action::Keys(codes)
+}
 
 /// How far a download has come, in megabytes: "3.2 of 8.9 MB".
 pub(super) fn download_progress(received: u64, total: Option<u64>) -> String {

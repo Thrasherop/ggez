@@ -8,6 +8,16 @@ Windows 11. Each version says what in it had not been tried on a real
 mouse when it was released; the table in the
 [README](README.md#how-it-works-and-how-sure-we-are) has the current state.
 
+## 0.5.2
+
+### Fixed
+
+- **"Press to set" switching Ctrl/Cmd off.** Choosing Ctrl/Cmd (or any
+  modifier) under "Held with" and then setting the key by pressing it
+  dropped the modifier: the key press replaced the whole binding. A key
+  pressed by itself now replaces only the key. A shortcut pressed with
+  its modifiers still replaces the binding.
+
 ## 0.5.1
 
 ### Fixed

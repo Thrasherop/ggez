@@ -1443,3 +1443,54 @@ fn a_modifier_added_after_the_key_keeps_the_key() {
         "key:shift+primary+c".parse().unwrap()
     );
 }
+
+#[test]
+fn pressing_a_key_to_set_it_keeps_what_is_held_with_it() {
+    let (mut harness, _, _) = window("press-keeps-held");
+    click(&mut harness, "Buttons");
+    click(&mut harness, "Side button 5");
+    let name = if cfg!(target_os = "macos") {
+        "Cmd/Ctrl"
+    } else {
+        "Ctrl/Cmd"
+    };
+    let binding =
+        |harness: &Harness<'static, App>| harness.state().draft.buttons.get(Button::Grid(5));
+    // Ctrl/Cmd first, then the key by pressing it: no keyboard has a
+    // Ctrl/Cmd key, so it cannot be part of what is pressed.
+    click(&mut harness, name);
+    click(&mut harness, "Press to set");
+    harness.press_key(egui::Key::C);
+    harness.run_steps(3);
+    assert_eq!(binding(&harness), "key:primary+c".parse().unwrap());
+    // And again with another key, and with Shift held as well.
+    click(&mut harness, "Shift");
+    click(&mut harness, "Press to set");
+    harness.press_key(egui::Key::V);
+    harness.run_steps(3);
+    assert_eq!(binding(&harness), "key:shift+primary+v".parse().unwrap());
+    // A whole shortcut pressed on the keyboard is taken as it is.
+    click(&mut harness, "Press to set");
+    harness.press_key_modifiers(egui::Modifiers::ALT, egui::Key::K);
+    harness.run_steps(3);
+    assert_eq!(binding(&harness), "key:alt+k".parse().unwrap());
+}
+
+#[test]
+fn a_pressed_key_replaces_the_key_and_a_pressed_shortcut_the_binding() {
+    let action = |text: &str| text.parse::<Action>().unwrap();
+    let kept = |pressed: &str, had: &str| view::keeping_modifiers(action(pressed), action(had));
+    assert_eq!(kept("key:c", "key:primary+5"), action("key:primary+c"));
+    assert_eq!(
+        kept("key:c", "key:ctrl+shift+alt+5"),
+        action("key:ctrl+shift+alt+c")
+    );
+    assert_eq!(kept("key:c", "key:5"), action("key:c"));
+    assert_eq!(
+        kept("key:ctrl+c", "key:primary+shift+5"),
+        action("key:ctrl+c")
+    );
+    // A button that was not a key has nothing held to keep.
+    assert_eq!(kept("key:c", "back"), action("key:c"));
+    assert_eq!(kept("key:c", "media:play-pause"), action("key:c"));
+}
