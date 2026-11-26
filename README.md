@@ -240,6 +240,10 @@ same.
   the list of downloads in the latest release. It sends nothing about you
   or your mouse. Turn it off with **Settings → Look for a new version once
   a day**; **Look now** still works when you ask.
+- **Your settings stay.** An update replaces the programs and nothing
+  else. Your profile, your saved profiles and "start at login" are kept
+  where they were, apart from the programs, and the mouse keeps what is
+  stored on it.
 - **Nothing installs by itself.** Finding a newer version only shows the
   line. If you have changes that are not on the mouse yet, the update
   waits for you to apply or revert them.

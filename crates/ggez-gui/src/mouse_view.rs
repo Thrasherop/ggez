@@ -862,13 +862,7 @@ pub fn buttons(
                 TEXT_FAINT
             },
         );
-        // Shortened to fit a key: "Ctrl+X", not "Ctrl + X".
         let (does, changed) = binding(button);
-        let text = does.replace(" + ", "+");
-        let font = FontId::new(
-            if text.chars().count() > 6 { 10.5 } else { 13.0 },
-            theme::strong(),
-        );
         let color = if is_selected {
             ON_SELECT
         } else if changed {
@@ -876,28 +870,57 @@ pub fn buttons(
         } else {
             TEXT
         };
-        // A binding too long for the key ends in an ellipsis, not at the
-        // key's edge; the editor beside it shows the whole of it.
         let room = rect.width() - 10.0;
-        let text = elided(&text, |text| {
-            let laid = ui
-                .painter()
-                .layout_no_wrap(text.to_string(), font.clone(), color);
-            laid.size().x <= room
-        });
-        let galley = ui.painter().layout_no_wrap(text, font, color);
         let clip = ui.painter().with_clip_rect(rect.shrink(3.0));
-        clip.galley(
-            pos2(
+        let fitted = |text: &str, size: f32, color: Color32| {
+            let font = FontId::new(size, theme::strong());
+            // Too long for the key: it ends in an ellipsis, not at the
+            // key's edge. The editor beside it shows the whole of it.
+            let text = elided(text, |text| {
+                let laid = ui
+                    .painter()
+                    .layout_no_wrap(text.to_string(), font.clone(), color);
+                laid.size().x <= room
+            });
+            ui.painter().layout_no_wrap(text, font, color)
+        };
+        let centred = |galley: std::sync::Arc<egui::Galley>, middle: f32| {
+            let at = pos2(
                 rect.center().x - galley.size().x / 2.0,
-                rect.center().y + 5.0 - galley.size().y / 2.0,
-            ),
-            galley,
-            color,
-        );
+                rect.center().y + middle - galley.size().y / 2.0,
+            );
+            clip.galley(at, galley, color);
+        };
+        match held_and_key(&does) {
+            // A shortcut: what is held in small letters, and under it the
+            // key, which is what tells one button from the next and so
+            // is never the part that gets cut short.
+            Some((held, key)) => {
+                let faint = theme::lerp(color, if is_selected { SELECT } else { RAISED }, 0.3);
+                let above = fitted(&held, 9.5, faint);
+                let at = pos2(
+                    rect.center().x - above.size().x / 2.0,
+                    rect.center().y - 1.0 - above.size().y / 2.0,
+                );
+                clip.galley(at, above, faint);
+                centred(fitted(&key, 12.5, color), 11.0);
+            }
+            None => {
+                let size = if does.chars().count() > 6 { 10.5 } else { 13.0 };
+                centred(fitted(&does, size, color), 5.0);
+            }
+        }
     }
 
     clicked.get()
+}
+
+/// A shortcut as it is described ("Ctrl + Shift + C") in two parts: what
+/// is held ("Ctrl+Shift") and the key ("C"). `None` for a binding that is
+/// one thing.
+fn held_and_key(described: &str) -> Option<(String, String)> {
+    let (held, key) = described.rsplit_once(" + ")?;
+    Some((held.replace(" + ", "+"), key.to_string()))
 }
 
 /// The text, or as much of its start as `fits` with an ellipsis after it.
@@ -994,6 +1017,20 @@ pub fn lighting(ui: &mut Ui, place: Place, lights: [Color32; 3]) -> [Pos2; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shortcut_is_shown_as_what_is_held_and_the_key() {
+        let parts = |text: &str| held_and_key(text);
+        assert_eq!(parts("Ctrl/Cmd + C"), Some(("Ctrl/Cmd".into(), "C".into())));
+        assert_eq!(
+            parts("Ctrl + Shift + Page Up"),
+            Some(("Ctrl+Shift".into(), "Page Up".into()))
+        );
+        // One key, or something that is not a key at all, is one thing.
+        assert_eq!(parts("C"), None);
+        assert_eq!(parts("Left click"), None);
+        assert_eq!(parts("Next CPI level"), None);
+    }
 
     #[test]
     fn text_too_long_for_its_place_ends_in_an_ellipsis() {

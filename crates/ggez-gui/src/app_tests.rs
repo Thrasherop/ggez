@@ -1410,3 +1410,36 @@ fn download_progress_is_given_in_megabytes() {
     assert_eq!(view::download_progress(9_000_000, Some(100)), "9.0 MB");
     assert_eq!(view::download_progress(5, Some(0)), "0.0 MB");
 }
+
+#[test]
+fn a_modifier_added_after_the_key_keeps_the_key() {
+    let (mut harness, _, _) = window("key-then-primary");
+    click(&mut harness, "Buttons");
+    click(&mut harness, "Side button 5");
+    let name = if cfg!(target_os = "macos") {
+        "Cmd/Ctrl"
+    } else {
+        "Ctrl/Cmd"
+    };
+    // Choose the letter from the list of keys, then the modifier.
+    harness
+        .get_by_role_and_label(egui::accesskit::Role::ComboBox, "5")
+        .click();
+    harness.run_steps(4);
+    harness.get_by_label("C").click();
+    harness.run_steps(4);
+    assert_eq!(
+        harness.state().draft.buttons.get(Button::Grid(5)),
+        "key:c".parse().unwrap()
+    );
+    click(&mut harness, name);
+    let action = harness.state().draft.buttons.get(Button::Grid(5));
+    assert_eq!(action, "key:primary+c".parse().unwrap());
+    assert_eq!(view::describe(action), format!("{name} + C"));
+    // A second modifier still keeps it.
+    click(&mut harness, "Shift");
+    assert_eq!(
+        harness.state().draft.buttons.get(Button::Grid(5)),
+        "key:shift+primary+c".parse().unwrap()
+    );
+}

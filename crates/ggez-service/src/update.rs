@@ -1188,6 +1188,39 @@ ABCDEF4b5a69788796a5b4c3d2e1f001f0c4a7bb6a1f0f2f0a3c1d9d4a6f5b1f  ggez-0.4.0-win
         assert_eq!(Record::load(&path).newer_than(version("0.1.0")), None);
     }
 
+    /// An update empties the folder it downloads into, so that folder
+    /// must never be, or hold, anything of the person's: their profile,
+    /// their saved profiles, the record of updates.
+    #[test]
+    fn what_an_update_deletes_is_nowhere_near_the_settings() {
+        let download = download_folder().unwrap();
+        let settings = crate::paths::config_dir().unwrap();
+        assert_eq!(download.file_name().unwrap(), "update");
+        assert_ne!(download, settings);
+        assert!(
+            !settings.starts_with(&download),
+            "{settings:?} in {download:?}"
+        );
+        for kept in [
+            crate::paths::profile_path().unwrap(),
+            Record::path().unwrap(),
+            settings.join("profiles"),
+        ] {
+            assert!(!kept.starts_with(&download), "{kept:?} would be deleted");
+        }
+
+        // And emptying it does only that: what is beside it stays.
+        let root = scratch("beside");
+        std::fs::write(root.join("profile.toml"), "polling = 500\n").unwrap();
+        let (pages, release) = served(b"the new ggez", b"the new ggez");
+        fetch(&pages, &release, &root.join("update"), &mut |_, _| {}).unwrap();
+        fetch(&pages, &release, &root.join("update"), &mut |_, _| {}).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(root.join("profile.toml")).unwrap(),
+            "polling = 500\n"
+        );
+    }
+
     #[test]
     fn a_folder_is_replaced_whole_or_not_at_all() {
         let root = scratch("folder");

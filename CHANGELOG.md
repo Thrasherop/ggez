@@ -8,9 +8,16 @@ Windows 11. Each version says what in it had not been tried on a real
 mouse when it was released; the table in the
 [README](README.md#how-it-works-and-how-sure-we-are) has the current state.
 
-## Not yet released
+## 0.5.1
 
 ### Fixed
+
+- **A shortcut's key disappearing from its side button.** Adding Ctrl/Cmd
+  (or any modifier) to a key made the button on the drawing read
+  "Ctrl/Cm…": the binding was right, but the key was cut off, so it
+  looked as if it had been reset. A shortcut is now drawn with what is
+  held in small letters above the key, and the key is never the part
+  that is cut short.
 
 - After an update on Windows, the installer that was downloaded is deleted
   once it has finished. It used to stay until ggez was next opened,
